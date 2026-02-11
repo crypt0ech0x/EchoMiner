@@ -1,11 +1,36 @@
-<div align="center">
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+# ECHO Miner (Solana Edition)
 
-  <h1>Built with AI Studio</h2>
+A production-ready Solana mining simulator built with Next.js 15, Tailwind CSS, and Framer Motion.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Features
+- **Authoritative Node Logic**: Simulated backend state managed via a secure local storage protocol.
+- **Crypto-Native UI**: Glassmorphism aesthetic with high-fidelity animations.
+- **Dynamic Character System**: NFT-style character avatars using DiceBear Adventurer collection.
+- **Streak & Boost Mechanics**: Progressive rewards and temporary ad-watch multipliers.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Getting Started
 
-</div>
+1. **Install Dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Run Development Server**:
+   ```bash
+   npm run dev
+   ```
+
+3. **Build for Production**:
+   ```bash
+   npm run build
+   ```
+
+## Folder Structure
+- `/app`: Next.js App Router (Layouts, Pages, Styles)
+- `/components`: Modular UI blocks (Mine, Boost, Store, Wallet)
+- `/lib`: Server logic, Constants, and Types
+- `/public`: Static assets
+
+## Environment
+Create a `.env.local` based on `env.example` if integrating with external Solana RPCs or Stripe.

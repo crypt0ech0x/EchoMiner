@@ -1,0 +1,5 @@
+{
+  "name": "ECHO Miner",
+  "description": "A high-performance Solana mining simulator with glassmorphism UI, real-time sessions, and multiplier boosts.",
+  "requestFramePermissions": []
+}
