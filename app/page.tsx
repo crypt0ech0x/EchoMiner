@@ -15,6 +15,7 @@ export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -48,10 +49,11 @@ export default function EchoMinerApp() {
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-purple-600/20 blur-[100px] rounded-full" />
       <div className="absolute top-1/2 -right-24 w-64 h-64 bg-teal-600/10 blur-[100px] rounded-full" />
       
-      <Layout 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
-        onOpenProfile={() => setIsProfileOpen(true)}
+      <Layout
+	activeTab={activeTab}
+	setActiveTab={setActiveTab}
+	onOpenProfile={() => setIsProfileOpen(true)}
+	onOpenNotifications={() => setIsNotificationsOpen(true)}
         state={state}
       >
         {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await AuthoritativeServer.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
