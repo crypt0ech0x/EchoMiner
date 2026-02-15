@@ -1,8 +1,12 @@
 
 import React, { useState } from 'react';
 import { AppState } from '../types';
-import { AuthoritativeServer } from '../authoritative-server';
 import { Wallet, ShieldAlert, CheckCircle2, Copy, ExternalLink, ArrowRight, ShieldCheck, Key } from 'lucide-react';
+
+async function linkWallet(address: string) {
+  // TODO: call /api/wallet/link
+  return { ok: true };
+}
 
 interface WalletTabProps {
   state: AppState;
@@ -24,12 +28,15 @@ const WalletTab: React.FC<WalletTabProps> = ({ state, onConnect }) => {
       await new Promise(resolve => setTimeout(resolve, 800));
       
       const mockAddress = "ECHO7k9u...sP2n8w";
-      const mockSignature = "sig_" + btoa(`Link ECHO Miner account ${state.user.id} to wallet ${mockAddress}`);
       
-      // In production, we'd use AuthoritativeServer methods here
-      const newState = { ...state, walletAddress: mockAddress, walletVerifiedAt: Date.now() };
-      onConnect(newState);
-      await AuthoritativeServer.saveState(newState);
+      const response = await linkWallet(mockAddress);
+      if (response.ok) {
+        // Update the state via parent component
+        const newState = { ...state, walletAddress: mockAddress, walletVerifiedAt: Date.now() };
+        onConnect(newState);
+      } else {
+        throw new Error("Link failed at API level.");
+      }
     } catch (err: any) {
       setError(err.message || "Failed to link wallet.");
     } finally {
