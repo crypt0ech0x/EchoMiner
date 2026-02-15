@@ -1,219 +1,122 @@
 
-import { 
-  AppState, 
-  NotificationType, 
-  NotificationPreferences,
-  ActiveBoost,
-  MiningSession,
-  AppNotification
-} from './types';
-import { 
-  BASE_MINING_RATE, 
-  SESSION_DURATION_MS, 
-  STREAK_GRACE_PERIOD_MS, 
-  GET_STREAK_MULTIPLIER,
-  AD_BOOST_DURATION_MS,
-  AD_BOOST_MULTIPLIER,
-  AD_BOOST_MAX_QUEUE_MS,
-  STORE_ITEMS
-} from './constants';
+import { AppState, NotificationType, NotificationPreferences } from './types';
 
+/**
+ * Client-side Proxy for the Authoritative Backend.
+ * Communicates with Next.js API routes under /app/api.
+ */
 export class AuthoritativeServer {
   private static STORAGE_KEY = 'echo_miner_authoritative_db';
 
   static async getState(): Promise<AppState> {
-    if (typeof window === 'undefined') return this.initializeNewUser();
-    const data = localStorage.getItem(this.STORAGE_KEY);
-    if (!data) return this.initializeNewUser();
-    const state = JSON.parse(data);
-    
-    // Recovery/Migration checks
-    if (!state.notifications) state.notifications = [];
-    if (!state.activeBoosts) state.activeBoosts = [];
-    
-    return state;
+    const local = typeof window !== 'undefined' ? localStorage.getItem(this.STORAGE_KEY) : null;
+    const currentState = local ? JSON.parse(local) : null;
+
+    const res = await fetch('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state: currentState })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
-  static async saveState(state: AppState) {
+  static saveState(state: AppState) {
     if (typeof window !== 'undefined') {
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
     }
   }
 
-  private static initializeNewUser(): AppState {
-    const now = Date.now();
-    const refCode = 'ECHO' + Math.floor(1000 + Math.random() * 9000);
-    return {
-      user: {
-        id: 'user_' + Math.random().toString(36).substr(2, 9),
-        username: refCode,
-        balance: 0,
-        totalMined: 0,
-        referrals: 0,
-        joinedDate: now,
-        guest: true,
-        riskScore: 0,
-        referralCode: refCode,
-        isAdmin: false,
-        priorityAirdrop: false,
-        notificationPreferences: {
-          session_end: true,
-          streak_grace_warning: true,
-          boost_expired: true,
-          weekly_summary: true,
-          airdrop_announcement: true
-        }
-      },
-      streak: { currentStreak: 0, lastSessionStartAt: null, lastSessionEndAt: null, graceEndsAt: null },
-      session: {
-        id: '', isActive: false, startTime: null, endTime: null, baseRate: BASE_MINING_RATE,
-        streakMultiplier: 1, boostMultiplier: 1, purchaseMultiplier: 1, effectiveRate: 0, status: 'ended'
-      },
-      activeBoosts: [], ledger: [], purchaseHistory: [], notifications: [],
-      walletAddress: null, walletVerifiedAt: null, currentNonce: null
-    };
-  }
-
   static async refreshState(): Promise<AppState> {
     const state = await this.getState();
-    const now = Date.now();
-    let changed = false;
-
-    // 1. Filter out expired boosts
-    const initialBoostCount = state.activeBoosts.length;
-    state.activeBoosts = state.activeBoosts.filter(b => b.expiresAt > now);
-    if (state.activeBoosts.length !== initialBoostCount) {
-      changed = true;
-      // Recalculate if active session
-      if (state.session.isActive) this.recalculateRate(state, now);
-    }
-
-    // 2. Settle sessions if they've reached their end time
-    if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
-      const durationSec = (state.session.endTime - (state.session.startTime || 0)) / 1000;
-      const earnings = durationSec * state.session.effectiveRate;
-      state.user.balance += earnings;
-      state.user.totalMined += earnings;
-      state.ledger.push({ 
-        id: 'led_settle_' + now, 
-        timestamp: now, 
-        deltaEcho: earnings, 
-        reason: 'session_settlement', 
-        sessionId: state.session.id, 
-        hash: btoa(state.session.id + earnings) 
-      });
-      state.streak.lastSessionEndAt = state.session.endTime;
-      state.streak.graceEndsAt = state.session.endTime + STREAK_GRACE_PERIOD_MS;
-      state.session.isActive = false;
-      state.session.status = 'settled';
-      changed = true;
-    }
-
-    if (changed) {
-      await this.saveState(state);
-    }
-    return state;
+    const res = await fetch('/api/mining/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async startSession(): Promise<AppState> {
     const state = await this.getState();
-    const now = Date.now();
-    if (state.session.isActive) throw new Error("Session already active");
-
-    let newStreak = state.streak.currentStreak;
-    if (state.streak.graceEndsAt && now > state.streak.graceEndsAt) newStreak = 1;
-    else newStreak += 1;
-
-    const streakMult = GET_STREAK_MULTIPLIER(newStreak);
-    const refMult = 1 + (state.user.referrals * 0.25);
-    const adMult = state.activeBoosts.filter(b => b.type === 'AD' && b.expiresAt > now).reduce((acc, b) => acc * b.multiplier, 1.0);
-    const storeMult = state.activeBoosts.filter(b => b.type === 'STORE' && b.expiresAt > now).reduce((acc, b) => acc * b.multiplier, 1.0);
-
-    const sessionId = 'sess_' + now;
-    state.session = {
-      id: sessionId, isActive: true, startTime: now, endTime: now + SESSION_DURATION_MS,
-      baseRate: BASE_MINING_RATE, streakMultiplier: streakMult, boostMultiplier: adMult * refMult,
-      purchaseMultiplier: storeMult, effectiveRate: BASE_MINING_RATE * streakMult * adMult * refMult * storeMult,
-      status: 'active'
-    };
-    state.streak.currentStreak = newStreak;
-    state.streak.lastSessionStartAt = now;
-    state.streak.graceEndsAt = null;
-
-    state.ledger.push({ id: 'led_start_' + now, timestamp: now, deltaEcho: 0, reason: 'session_start', sessionId, hash: btoa('start' + sessionId + now) });
-    await this.saveState(state);
-    return state;
+    const res = await fetch('/api/mining/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || "Failed to start session");
+    }
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async activateAdBoost(): Promise<AppState> {
     const state = await this.getState();
-    const now = Date.now();
-    const existing = state.activeBoosts.find(b => b.type === 'AD' && b.expiresAt > now);
-    let startAt = now;
-    if (existing) {
-      if (existing.expiresAt - now >= AD_BOOST_MAX_QUEUE_MS) throw new Error("Queue full");
-      startAt = existing.expiresAt;
+    const res = await fetch('/api/boost/activate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.message || "Failed to activate boost");
     }
-    const newBoost: ActiveBoost = { id: 'boost_ad_' + now, type: 'AD', multiplier: AD_BOOST_MULTIPLIER, startAt, expiresAt: startAt + AD_BOOST_DURATION_MS };
-    if (existing) existing.expiresAt += AD_BOOST_DURATION_MS;
-    else state.activeBoosts.push(newBoost);
-
-    state.ledger.push({ id: 'led_boost_' + now, timestamp: now, deltaEcho: 0, reason: 'boost_activation', hash: btoa('boost' + now) });
-    this.recalculateRate(state, now);
-    await this.saveState(state);
-    return state;
-  }
-
-  private static recalculateRate(state: AppState, now: number) {
-    if (!state.session.isActive) return;
-    const refMult = 1 + (state.user.referrals * 0.25);
-    const adMult = state.activeBoosts.filter(b => b.type === 'AD' && b.expiresAt > now).reduce((acc, b) => acc * b.multiplier, 1.0);
-    const storeMult = state.activeBoosts.filter(b => b.type === 'STORE' && b.expiresAt > now).reduce((acc, b) => acc * b.multiplier, 1.0);
-    state.session.boostMultiplier = adMult * refMult;
-    state.session.purchaseMultiplier = storeMult;
-    state.session.effectiveRate = state.session.baseRate * state.session.streakMultiplier * adMult * refMult * storeMult;
-  }
-
-  // --- Notification Management ---
-  static async addNotification(type: NotificationType, title: string, body: string): Promise<AppState> {
-    const state = await this.getState();
-    const now = Date.now();
-    const notif: AppNotification = {
-      id: 'notif_' + Math.random().toString(36).substr(2, 9),
-      type, title, body, createdAt: now, readAt: null
-    };
-    state.notifications.unshift(notif);
-    await this.saveState(state);
-    return state;
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async markNotificationAsRead(id: string): Promise<AppState> {
     const state = await this.getState();
-    const notif = state.notifications.find(n => n.id === id);
-    if (notif) notif.readAt = Date.now();
-    await this.saveState(state);
-    return state;
+    const res = await fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, id })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async markAllAsRead(): Promise<AppState> {
     const state = await this.getState();
-    const now = Date.now();
-    state.notifications.forEach(n => { if (!n.readAt) n.readAt = now; });
-    await this.saveState(state);
-    return state;
+    const res = await fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, all: true })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async clearNotifications(): Promise<AppState> {
     const state = await this.getState();
-    state.notifications = [];
-    await this.saveState(state);
-    return state;
+    const res = await fetch('/api/notifications', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 
   static async updatePFP(pfpUrl: string): Promise<AppState> {
     const state = await this.getState();
-    state.user.pfpUrl = pfpUrl;
-    await this.saveState(state);
-    return state;
+    const res = await fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, pfpUrl })
+    });
+    const newState = await res.json();
+    this.saveState(newState);
+    return newState;
   }
 }

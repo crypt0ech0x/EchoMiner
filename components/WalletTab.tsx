@@ -4,8 +4,12 @@ import { AppState } from '../types';
 import { Wallet, ShieldAlert, CheckCircle2, Copy, ExternalLink, ArrowRight, ShieldCheck, Key } from 'lucide-react';
 
 async function linkWallet(address: string) {
-  // TODO: call /api/wallet/link
-  return { ok: true };
+  const res = await fetch('/api/wallet/link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address })
+  });
+  return await res.json();
 }
 
 interface WalletTabProps {
