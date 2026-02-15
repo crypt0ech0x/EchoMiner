@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Tab, AppState } from '@/lib/types';
-import { AuthoritativeServer } from '@/lib/authoritative-server';
+import { EchoAPI } from '@/lib/api';
 import Layout from '@/components/Layout';
 import MineTab from '@/components/MineTab';
 import BoostTab from '@/components/BoostTab';
@@ -19,7 +19,7 @@ export default function EchoMinerApp() {
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
-    AuthoritativeServer.getState().then(setState);
+    EchoAPI.getState().then(setState);
   }, []);
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function EchoMinerApp() {
       const now = Date.now();
       setCurrentTime(now);
       
-      const updated = await AuthoritativeServer.refreshState();
+      const updated = await EchoAPI.refreshState();
       setState(updated);
     }, 1000);
     return () => clearInterval(interval);
@@ -42,6 +42,10 @@ export default function EchoMinerApp() {
 
   if (!state) return <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">Initializing Voyager Node...</div>;
 
+  const handleTabChange = (tab: Tab) => {
+    setActiveTab(tab);
+  };
+
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-purple-600/20 blur-[100px] rounded-full" />
@@ -49,13 +53,13 @@ export default function EchoMinerApp() {
       
       <Layout 
         activeTab={activeTab} 
-        setActiveTab={setActiveTab} 
+        setActiveTab={handleTabChange} 
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         state={state}
       >
-        {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await AuthoritativeServer.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
-        {activeTab === Tab.BOOST && <BoostTab state={state} onApplyAdBoost={async () => setState(await AuthoritativeServer.activateAdBoost())} currentTime={currentTime} />}
+        {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await EchoAPI.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
+        {activeTab === Tab.BOOST && <BoostTab state={state} onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())} currentTime={currentTime} />}
         {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
         {activeTab === Tab.WALLET && <WalletTab state={state} onConnect={setState} />}
       </Layout>

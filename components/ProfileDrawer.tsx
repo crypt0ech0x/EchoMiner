@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { AppState, NotificationType, LedgerEntry } from '../types';
-import { AuthoritativeServer } from '../server';
+import { AppState, NotificationType, LedgerEntry } from '../lib/types';
+import { EchoAPI } from '../lib/api';
 import { 
   X, Users, History, Settings, LogOut, Twitter, MessageSquare, 
   Globe, Download, ShieldAlert, Zap, ArrowLeft, Copy, ExternalLink, 
@@ -39,14 +39,17 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
   if (!isOpen) return null;
 
   const handleExport = async () => {
-    const csv = await AuthoritativeServer.getSnapshotCSV();
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `echo_snapshot_${Date.now()}.csv`;
-    a.click();
-    alert("Snapshot export successful.");
+    try {
+      const csv = await EchoAPI.getSnapshotCSV();
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `echo_snapshot_${Date.now()}.csv`;
+      a.click();
+    } catch (err) {
+      alert("Snapshot export failed.");
+    }
   };
 
   const copyReferral = () => {
@@ -68,7 +71,7 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
     reader.onload = async (event) => {
       const base64 = event.target?.result as string;
       try {
-        const newState = await AuthoritativeServer.updatePFP(base64);
+        const newState = await EchoAPI.updateProfile({ pfpUrl: base64 });
         if (onUpdateUser) onUpdateUser(newState);
       } catch (err) { alert("Failed to update profile picture."); } finally { setIsUploading(false); }
     };
@@ -79,7 +82,7 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
     if (newUsername.trim() === state.user.username) { setIsEditingUsername(false); setUsernameError(null); return; }
     setIsSavingUsername(true); setUsernameError(null);
     try {
-        const newState = await AuthoritativeServer.updateUsername(newUsername);
+        const newState = await EchoAPI.updateProfile({ username: newUsername });
         if (onUpdateUser) onUpdateUser(newState);
         setIsEditingUsername(false);
     } catch (err: any) { setUsernameError(err.message || "Failed to update username."); } finally { setIsSavingUsername(false); }
@@ -88,32 +91,35 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
   const handleVerifyEmail = async () => {
     if (!emailInput.includes('@')) { alert("Invalid email."); return; }
     setIsVerifyingEmail(true);
-    setTimeout(async () => {
-      const newState = await AuthoritativeServer.verifyEmail(emailInput);
+    try {
+      const newState = await EchoAPI.verifyEmail(emailInput);
       if (onUpdateUser) onUpdateUser(newState);
-      setIsVerifyingEmail(false);
       alert("Email verified successfully!");
-    }, 1500);
+    } catch (err) {
+      alert("Verification failed.");
+    } finally {
+      setIsVerifyingEmail(false);
+    }
   };
 
   const handleTogglePreference = async (type: NotificationType) => {
     const newPrefs = { ...state.user.notificationPreferences, [type]: !state.user.notificationPreferences[type] };
-    const newState = await AuthoritativeServer.updateNotificationPreferences(newPrefs);
+    const newState = await EchoAPI.updateNotificationPreferences(newPrefs);
     if (onUpdateUser) onUpdateUser(newState);
   };
 
   const handleMarkAsRead = async (id: string) => {
-    const newState = await AuthoritativeServer.markNotificationAsRead(id);
+    const newState = await EchoAPI.handleNotifications('read', id);
     if (onUpdateUser) onUpdateUser(newState);
   };
 
   const handleMarkAllRead = async () => {
-    const newState = await AuthoritativeServer.markAllAsRead();
+    const newState = await EchoAPI.handleNotifications('readAll');
     if (onUpdateUser) onUpdateUser(newState);
   };
 
   const handleClearNotifications = async () => {
-    const newState = await AuthoritativeServer.clearNotifications();
+    const newState = await EchoAPI.handleNotifications('clear');
     if (onUpdateUser) onUpdateUser(newState);
   };
 
@@ -202,21 +208,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
            ))}
         </div>
       </div>
-
-      <div className="glass p-6 rounded-[24px] border border-white/5 flex items-center justify-between">
-         <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400 border border-orange-500/10">
-               <Activity className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-sm font-black text-white">Cloud Efficiency</p>
-              <p className="text-[10px] text-slate-500 font-bold uppercase">Optimal Node Health</p>
-            </div>
-         </div>
-         <div className="text-right">
-           <Trophy className="w-6 h-6 text-yellow-500/50" />
-         </div>
-      </div>
     </div>
   );
 
@@ -248,26 +239,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
         <button onClick={copyReferral} className="w-full h-14 bg-white text-slate-950 rounded-2xl font-black text-xs uppercase tracking-[0.15em] flex items-center justify-center gap-2 hover:bg-slate-200 transition-all active:scale-95">
           <Share2 className="w-4 h-4" /> Share Link
         </button>
-      </div>
-
-      <div className="space-y-4">
-        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Network Stats</h4>
-        {/* Fixed syntax error: restored correct className and grid class */}
-        <div className="grid grid-cols-2 gap-4">
-           <div className="glass p-5 rounded-2xl border border-white/5 text-center">
-              <p className="text-xl font-black text-white">{state.user.referrals}</p>
-              <p className="text-[10px] text-slate-500 font-bold uppercase">Active nodes</p>
-           </div>
-           <div className="glass p-5 rounded-2xl border border-white/5 text-center">
-              <p className="text-xl font-black text-teal-400">+{analyticsStats.sourceBreakdown.referral.toFixed(2)}</p>
-              <p className="text-[10px] text-slate-500 font-bold uppercase">Bonus ECHO</p>
-           </div>
-        </div>
-      </div>
-
-      <div className="glass p-5 rounded-2xl border border-dashed border-white/10 flex items-center gap-4 opacity-60">
-        <HelpCircle className="w-5 h-5 text-slate-600" />
-        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight italic">Rewards are distributed automatically upon each successful session settlement.</p>
       </div>
     </div>
   );
@@ -318,10 +289,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
                         </span>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-bold text-slate-600 uppercase">TX: {entry.hash.substring(0, 12)}...</span>
-                      <span className="text-[9px] font-bold text-slate-500 uppercase">{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -334,7 +301,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
 
   const renderMainView = () => (
     <div className="flex-1 overflow-y-auto px-8 pb-8 space-y-8 no-scrollbar animate-in fade-in slide-in-from-right-4 duration-300">
-      {/* User Hero */}
       <div className="flex flex-col items-center text-center">
         <div className="relative mb-4 group cursor-pointer" onClick={handlePFPClick}>
           <div className={`w-28 h-28 rounded-full p-1 shadow-2xl transition-transform group-active:scale-95 ${state.user.priorityAirdrop ? 'bg-gradient-to-tr from-yellow-400 via-purple-500 to-teal-400 animate-spin-slow' : 'bg-white/10 shadow-black/40'}`}>
@@ -349,18 +315,15 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
               </div>
             </div>
           </div>
-          <div className="absolute bottom-1 right-2 w-7 h-7 rounded-full bg-teal-400 border-4 border-[#020617] shadow-lg flex items-center justify-center">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#020617]" />
-          </div>
           <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
         </div>
         
         <div className="flex flex-col items-center w-full">
           {isEditingUsername ? (
-            <div className="w-full space-y-2 animate-in zoom-in-95 duration-200">
+            <div className="w-full space-y-2">
                 <div className="relative flex items-center">
-                    <input autoFocus type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white font-black text-center focus:outline-none focus:border-purple-500 transition-colors" placeholder="Enter username" onKeyDown={(e) => e.key === 'Enter' && handleSaveUsername()} />
-                    <button disabled={isSavingUsername} onClick={handleSaveUsername} className="absolute right-2 w-8 h-8 rounded-lg bg-teal-500 flex items-center justify-center text-white active:scale-90 transition-transform disabled:opacity-50">
+                    <input autoFocus type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white font-black text-center focus:outline-none focus:border-purple-500" placeholder="Enter username" onKeyDown={(e) => e.key === 'Enter' && handleSaveUsername()} />
+                    <button disabled={isSavingUsername} onClick={handleSaveUsername} className="absolute right-2 w-8 h-8 rounded-lg bg-teal-500 flex items-center justify-center text-white">
                         {isSavingUsername ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                     </button>
                 </div>
@@ -372,27 +335,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
                 <Edit3 className="w-4 h-4 text-slate-600 group-hover:text-purple-400 transition-colors" />
             </button>
           )}
-
-          {state.user.priorityAirdrop && (
-            <div className="mt-2 flex items-center gap-1.5 bg-purple-500/20 px-2 py-1 rounded-lg border border-purple-500/30">
-              <Zap className="w-3 h-3 text-purple-400 fill-purple-400" />
-              <span className="text-[9px] font-black text-purple-300 uppercase tracking-widest">Mythic Tier Voyager</span>
-            </div>
-          )}
-          <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-2 opacity-60">ID: {state.user.id}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center cursor-pointer hover:bg-white/10 transition-colors" onClick={() => setSubView('referral')}>
-          <Users className="w-5 h-5 text-purple-400 mx-auto mb-2" />
-          <p className="text-xl font-black text-white">{state.user.referrals}</p>
-          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Network</p>
-        </div>
-        <div className="bg-white/5 p-4 rounded-2xl border border-white/5 text-center cursor-pointer hover:bg-white/10 transition-colors" onClick={() => setSubView('analytics')}>
-          <BarChart3 className="w-5 h-5 text-teal-400 mx-auto mb-2" />
-          <p className="text-xl font-black text-white">{state.streak.currentStreak}D</p>
-          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Stats</p>
         </div>
       </div>
 
@@ -400,16 +342,15 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
         {[
           { label: 'Mining Analytics', icon: BarChart3, sub: 'Performance & Projections', view: 'analytics' },
           { label: 'Referral Program', icon: Users, sub: 'Earn +25% per friend', view: 'referral' },
-          { label: 'Notifications', icon: Bell, sub: unreadCount ? `${unreadCount} unread alerts` : 'No new alerts', view: 'notifications' },
+          { label: 'Notifications', icon: Bell, sub: 'Manage alerts', view: 'notifications' },
           { label: 'Mining History', icon: History, sub: 'Daily logs & earnings', view: 'history' },
-          { label: 'Settings', icon: Settings, sub: 'Security & notifications', view: 'settings' },
+          { label: 'Settings', icon: Settings, sub: 'Security & preferences', view: 'settings' },
         ].map((item, idx) => {
           const Icon = item.icon;
           return (
             <button key={idx} onClick={() => setSubView(item.view as DrawerSubView)} className="w-full p-4 flex items-center gap-4 rounded-2xl hover:bg-white/5 transition-colors text-left group">
               <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-slate-500 group-hover:text-white transition-colors border border-white/5 relative">
                 <Icon className="w-5 h-5" />
-                {item.view === 'notifications' && unreadCount > 0 && <div className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full border border-[#020617]" />}
               </div>
               <div className="flex-1">
                 <p className="text-sm font-black text-white">{item.label}</p>
@@ -419,17 +360,6 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
             </button>
           );
         })}
-      </div>
-
-      <div className="space-y-4 pt-4 border-t border-white/10">
-        <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-[0.2em]">Community</h4>
-        <div className="flex gap-4">
-          {[Twitter, MessageSquare, Globe].map((Icon, idx) => (
-            <button key={idx} className="w-12 h-12 glass border border-white/10 rounded-xl flex items-center justify-center text-slate-500 hover:text-white transition-all hover:scale-110 active:scale-90">
-              <Icon className="w-5 h-5" />
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );
@@ -462,19 +392,12 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
               >
                 {isUnread && <div className="absolute top-0 left-0 w-1 h-full bg-purple-500" />}
                 <div className="flex gap-4">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    notif.type === 'session_end' ? 'bg-teal-500/10 text-teal-400' :
-                    notif.type === 'boost_expired' ? 'bg-orange-500/10 text-orange-400' :
-                    'bg-purple-500/10 text-purple-400'
-                  }`}>
-                    {notif.type === 'session_end' ? <Clock className="w-5 h-5" /> : 
-                     notif.type === 'boost_expired' ? <Zap className="w-5 h-5" /> : 
-                     <Bell className="w-5 h-5" />}
+                  <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center shrink-0">
+                    <Bell className="w-5 h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-sm font-black text-white truncate">{notif.title}</p>
-                      <span className="text-[8px] font-bold text-slate-500 uppercase shrink-0 ml-2">{new Date(notif.createdAt).toLocaleDateString()}</span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-relaxed font-medium">{notif.body}</p>
                   </div>
@@ -492,35 +415,20 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
       <div className="space-y-4">
         <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Email Verification</h4>
         <div className={`glass rounded-2xl p-5 border ${state.user.emailVerified ? 'border-teal-500/20' : 'border-white/10'} space-y-4`}>
-          <div className="flex items-center gap-4">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${state.user.emailVerified ? 'bg-teal-500/10 text-teal-400' : 'bg-white/5 text-slate-500'}`}>
-              <Mail className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-black text-white uppercase truncate">{state.user.email || 'Email not set'}</p>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">{state.user.emailVerified ? 'Verified & Secure' : 'Required for email alerts'}</p>
-            </div>
-            {state.user.emailVerified && <CheckCircle2 className="w-5 h-5 text-teal-400" />}
-          </div>
-
-          {!state.user.emailVerified && (
-            <div className="space-y-2">
-              <input 
-                type="email" 
-                value={emailInput} 
-                onChange={(e) => setEmailInput(e.target.value)} 
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-xs font-bold text-white focus:outline-none focus:border-teal-500" 
-                placeholder="voyager@echo.io"
-              />
-              <button 
-                onClick={handleVerifyEmail}
-                disabled={isVerifyingEmail}
-                className="w-full h-10 bg-teal-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-teal-400 active:scale-95 transition-all disabled:opacity-50"
-              >
-                {isVerifyingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Verify Address'}
-              </button>
-            </div>
-          )}
+          <input 
+            type="email" 
+            value={emailInput} 
+            onChange={(e) => setEmailInput(e.target.value)} 
+            className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-xs font-bold text-white focus:outline-none focus:border-teal-500" 
+            placeholder="voyager@echo.io"
+          />
+          <button 
+            onClick={handleVerifyEmail}
+            disabled={isVerifyingEmail || state.user.emailVerified}
+            className="w-full h-10 bg-teal-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {isVerifyingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : state.user.emailVerified ? 'Verified' : 'Verify Address'}
+          </button>
         </div>
       </div>
 
@@ -528,16 +436,13 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
         <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Notification Preferences</h4>
         <div className="space-y-3">
           {[
-            { id: 'session_end', label: 'Mining Completion', sub: 'Alert when a cycle ends' },
-            { id: 'streak_grace_warning', label: 'Streak Grace Warning', sub: '2h before streak reset' },
-            { id: 'boost_expired', label: 'Boost Expired', sub: 'When 2x multiplier ends' },
-            { id: 'airdrop_announcement', label: 'Project Updates', sub: 'Announcements & snapshots' },
+            { id: 'session_end', label: 'Mining Completion' },
+            { id: 'streak_grace_warning', label: 'Streak Grace Warning' },
+            { id: 'boost_expired', label: 'Boost Expired' },
+            { id: 'airdrop_announcement', label: 'Project Updates' },
           ].map((opt) => (
-            <div key={opt.id} className="flex items-center justify-between p-4 glass rounded-2xl border border-white/5 transition-colors">
-              <div className="flex-1">
-                <p className="text-sm font-black text-white">{opt.label}</p>
-                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">{opt.sub}</p>
-              </div>
+            <div key={opt.id} className="flex items-center justify-between p-4 glass rounded-2xl border border-white/5">
+              <span className="text-sm font-black text-white">{opt.label}</span>
               <button 
                 onClick={() => handleTogglePreference(opt.id as NotificationType)}
                 className={`w-10 h-5 rounded-full relative p-1 transition-colors ${state.user.notificationPreferences[opt.id as NotificationType] ? 'bg-teal-500' : 'bg-slate-800'}`}
@@ -564,14 +469,7 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
-            <h2 className="text-2xl font-black text-white tracking-tight">
-              {subView === 'notifications' ? 'Alerts' : 
-               subView === 'settings' ? 'Settings' : 
-               subView === 'analytics' ? 'Analytics' :
-               subView === 'referral' ? 'Network' :
-               subView === 'history' ? 'Ledger' :
-               'Account'}
-            </h2>
+            <h2 className="text-2xl font-black text-white tracking-tight uppercase tracking-widest">Account</h2>
           </div>
           <button onClick={onClose} className="w-10 h-10 rounded-full glass border border-white/10 flex items-center justify-center text-white/60 hover:text-white transition-colors">
             <X className="w-5 h-5" />
@@ -586,10 +484,9 @@ const ProfileDrawer: React.FC<ProfileDrawerProps> = ({ isOpen, onClose, state, o
         {subView === 'history' && renderHistoryView()}
 
         <div className="p-8 border-t border-white/10 shrink-0">
-          <button className="w-full h-14 glass border border-red-500/10 text-red-500/60 rounded-2xl flex items-center justify-center gap-2 font-black text-xs uppercase tracking-widest hover:bg-red-500/5 hover:text-red-500 transition-colors">
-            <LogOut className="w-4 h-4" /> Terminate Session
+          <button onClick={onClose} className="w-full h-14 glass border border-red-500/10 text-red-500/60 rounded-2xl flex items-center justify-center gap-2 font-black text-xs uppercase tracking-widest hover:bg-red-500/5 hover:text-red-500 transition-colors">
+            <LogOut className="w-4 h-4" /> Close Session
           </button>
-          <p className="text-center text-[10px] text-slate-700 font-bold mt-6 tracking-tighter uppercase">Build 0.12.5 • Mainnet Devnet</p>
         </div>
       </div>
     </div>

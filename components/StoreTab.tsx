@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { AppState, StoreItem } from '../types';
-import { AuthoritativeServer } from '../server';
-import { STORE_ITEMS } from '../constants';
+import { AppState, StoreItem } from '../lib/types';
+import { EchoAPI } from '../lib/api';
+import { STORE_ITEMS } from '../lib/constants';
 import { Gem, Crown, Sparkles, Check, Loader2, History, ChevronRight, Zap } from 'lucide-react';
 
 interface StoreTabProps {
@@ -17,17 +17,14 @@ const StoreTab: React.FC<StoreTabProps> = ({ state, onPurchase }) => {
   const handleStartPurchase = async (item: StoreItem) => {
     setProcessingId(item.id);
     try {
-      // 1. Create Stripe Session on Server
-      const sessionId = await AuthoritativeServer.createStripeSession(item.id);
+      const sessionId = await EchoAPI.createStripeSession(item.id);
       
-      // 2. Simulate User Redirect to Stripe & Success Return
-      console.log(`Redirecting to Stripe: ${sessionId}...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Simulate Stripe Interaction
+      await new Promise(resolve => setTimeout(resolve, 1500));
       
-      // 3. Simulate Webhook receiving success
-      const newState = await AuthoritativeServer.handleStripeWebhook(sessionId);
+      const newState = await EchoAPI.handleStripeWebhook(sessionId);
       onPurchase(newState);
-      alert(`Payment Successful! ${item.name} has been activated.`);
+      alert(`Payment Successful! ${item.name} activated.`);
     } catch (err: any) {
       alert(err.message || "Purchase failed.");
     } finally {
@@ -59,7 +56,7 @@ const StoreTab: React.FC<StoreTabProps> = ({ state, onPurchase }) => {
               <p className="text-slate-600 font-bold">No transactions found.</p>
             </div>
           ) : (
-            state.purchaseHistory.slice().reverse().map((entry) => {
+            state.purchaseHistory.slice().reverse().map((entry: any) => {
               const item = STORE_ITEMS.find(i => i.id === entry.itemId);
               return (
                 <div key={entry.id} className="glass p-5 rounded-[24px] flex items-center justify-between border border-white/5">
@@ -92,73 +89,34 @@ const StoreTab: React.FC<StoreTabProps> = ({ state, onPurchase }) => {
                 item.isPopular ? 'border-purple-500/30 ring-1 ring-purple-500/20' : 'border-white/10'
               }`}
             >
-              {item.isPopular && (
-                <div className="absolute top-0 right-0 bg-purple-600 text-white text-[10px] font-black px-4 py-1.5 rounded-bl-2xl uppercase tracking-tighter">
-                  Most Popular
-                </div>
-              )}
-              
               <div className="flex gap-5">
-                <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 border border-white/5 ${
-                  item.price > 20 ? 'bg-gradient-to-br from-indigo-600/20 to-purple-600/20 text-indigo-400' : 'bg-white/5 text-slate-400'
-                }`}>
+                <div className={`w-20 h-20 rounded-3xl flex items-center justify-center shrink-0 transition-transform group-hover:scale-105 border border-white/5 bg-white/5 text-slate-400`}>
                   {item.price > 40 ? <Crown className="w-10 h-10" /> : <Gem className="w-10 h-10" />}
                 </div>
                 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center flex-wrap gap-2 mb-1">
                     <h3 className="font-black text-xl text-white truncate tracking-tight">{item.name}</h3>
-                    {item.badge && (
-                      <span className="bg-teal-400/10 text-teal-400 text-[10px] font-black px-2 py-0.5 rounded border border-teal-400/20 uppercase">
-                        {item.badge}
-                      </span>
-                    )}
-                    {item.id === 'resonance_echo' && (
-                      <div className="flex items-center gap-1 bg-purple-500/20 px-1.5 py-0.5 rounded border border-purple-500/20">
-                        <Zap className="w-2.5 h-2.5 text-purple-400 fill-purple-400" />
-                        <span className="text-[9px] text-purple-300 font-black uppercase tracking-tight">Priority Airdrop</span>
-                      </div>
-                    )}
                   </div>
                   <p className="text-xs text-slate-500 leading-relaxed line-clamp-2 mb-6 font-medium">{item.description}</p>
                   
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex flex-col items-start">
-                      <span className="text-[10px] text-slate-600 font-black uppercase tracking-[0.2em] mb-1">Package Yield</span>
                       <span className="text-2xl font-black text-white leading-tight">{item.echoAmount?.toLocaleString()} <span className="text-xs text-slate-500">ECHO</span></span>
                     </div>
-                    <div className="flex flex-col items-center gap-2 flex-1 max-w-[140px]">
-                      <button 
-                        onClick={() => handleStartPurchase(item)}
-                        disabled={!!processingId}
-                        className="w-full h-14 bg-white text-slate-900 rounded-[20px] font-black uppercase tracking-widest text-sm hover:bg-slate-200 transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2"
-                      >
-                        {processingId === item.id ? <Loader2 className="w-5 h-5 animate-spin" /> : `$${item.price.toFixed(2)}`}
-                      </button>
-                    </div>
+                    <button 
+                      onClick={() => handleStartPurchase(item)}
+                      disabled={!!processingId}
+                      className="h-12 px-6 bg-white text-slate-900 rounded-[16px] font-black uppercase tracking-widest text-xs hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
+                    >
+                      {processingId === item.id ? <Loader2 className="w-4 h-4 animate-spin" /> : `$${item.price.toFixed(2)}`}
+                    </button>
                   </div>
-                </div>
-              </div>
-              
-              <div className="mt-6 pt-5 border-t border-white/5 flex gap-4 overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-2 shrink-0">
-                  <Check className="w-3.5 h-3.5 text-teal-400" />
-                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Authoritative Settle</span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Check className="w-3.5 h-3.5 text-teal-400" />
-                  <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Stripe Secured</span>
                 </div>
               </div>
             </div>
           ))}
         </div>
-      )}
-
-      {!showHistory && (
-        <button className="w-full py-6 flex items-center justify-center gap-2 text-[11px] font-black text-slate-600 uppercase tracking-[0.2em] hover:text-slate-400 transition-colors border-t border-white/5">
-          Restore Purchases <ChevronRight className="w-4 h-4" />
-        </button>
       )}
     </div>
   );

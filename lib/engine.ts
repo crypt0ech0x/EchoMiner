@@ -12,14 +12,10 @@ import {
   GET_STREAK_MULTIPLIER,
   AD_BOOST_DURATION_MS,
   AD_BOOST_MULTIPLIER,
-  AD_BOOST_MAX_QUEUE_MS
+  AD_BOOST_MAX_QUEUE_MS,
+  STORE_ITEMS
 } from './constants';
 
-/**
- * Server-side logic engine. 
- * In a real production app, this would interact with a database.
- * For this implementation, it performs authoritative state transformations.
- */
 export class EchoEngine {
   
   static recalculateRate(state: AppState, now: number) {
@@ -67,7 +63,6 @@ export class EchoEngine {
       state.session.isActive = false;
       state.session.status = 'settled';
       
-      // Auto-notify
       state.notifications.unshift({
         id: 'notif_settle_' + now,
         type: 'session_end',
@@ -124,6 +119,45 @@ export class EchoEngine {
     }
 
     state.ledger.push({ id: 'led_boost_' + now, timestamp: now, deltaEcho: 0, reason: 'boost_activation', hash: btoa('boost' + now) });
+    this.recalculateRate(state, now);
+    return state;
+  }
+
+  static getSnapshotCSV(state: AppState): string {
+    const headers = "WalletAddress,EchoBalance,VerifiedAt,RiskScore,IsAdmin,PriorityAirdrop\n";
+    const row = `${state.walletAddress || 'N/A'},${state.user.balance.toFixed(4)},${state.walletVerifiedAt ? new Date(state.walletVerifiedAt).toISOString() : 'N/A'},${state.user.riskScore},${state.user.isAdmin ? 'TRUE' : 'FALSE'},${state.user.priorityAirdrop ? 'TRUE' : 'FALSE'}\n`;
+    return headers + row;
+  }
+
+  static processPurchase(state: AppState, sessionId: string, now: number): AppState {
+    const historyEntry = state.purchaseHistory.find(h => h.id === sessionId);
+    if (!historyEntry || historyEntry.status === 'paid') return state;
+    const item = STORE_ITEMS.find(i => i.id === historyEntry.itemId);
+    if (!item) return state;
+    
+    historyEntry.status = 'paid';
+    if (item.echoAmount) {
+      state.user.balance += item.echoAmount;
+      state.ledger.push({
+        id: 'led_purchase_' + now,
+        timestamp: now,
+        deltaEcho: item.echoAmount,
+        reason: 'purchase_topup',
+        hash: btoa(item.id + now)
+      });
+    }
+
+    if (item.id === 'resonance_echo') state.user.priorityAirdrop = true;
+    if (item.multiplier && item.multiplier > 1) {
+      state.activeBoosts.push({
+        id: 'boost_store_' + item.id + '_' + now,
+        type: 'STORE',
+        multiplier: item.multiplier,
+        startAt: now,
+        expiresAt: item.durationDays ? now + (item.durationDays * 86400000) : now + 3153600000000,
+        sourceRef: item.id
+      });
+    }
     this.recalculateRate(state, now);
     return state;
   }
