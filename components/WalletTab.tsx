@@ -161,7 +161,7 @@ const WalletTab: React.FC<WalletTabProps> = ({ state, onConnect }) => {
           <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ShieldCheck className="text-teal-400 w-5 h-5" />
-              <span className="text-xs font-bold text-white">Minimum Balance ({'>'}0.01 ECHO)</span>
+              <span className="text-xs font-bold text-white">Minimum Balance (>0.01 ECHO)</span>
             </div>
             <CheckCircle2 className="w-4 h-4 text-teal-400" />
           </div>

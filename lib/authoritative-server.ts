@@ -67,6 +67,58 @@ export class AuthoritativeServer {
     };
   }
 
+  /**
+   * Main heartbeat/sync method. 
+   * Cleans up expired boosts, recalculates rates, and settles sessions.
+   */
+  static async refreshState(): Promise<AppState> {
+    const state = await this.getState();
+    const now = Date.now();
+    let changed = false;
+
+    // 1. Filter out expired boosts
+    const initialBoostCount = state.activeBoosts.length;
+    state.activeBoosts = state.activeBoosts.filter(b => b.expiresAt > now);
+    if (state.activeBoosts.length !== initialBoostCount) {
+      changed = true;
+    }
+
+    // 2. Recalculate rates if session is active
+    if (state.session.isActive) {
+      const oldRate = state.session.effectiveRate;
+      this.recalculateRate(state, now);
+      if (state.session.effectiveRate !== oldRate) {
+        changed = true;
+      }
+    }
+
+    // 3. Settle sessions if they've reached their end time
+    if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
+      const durationSec = (state.session.endTime - (state.session.startTime || 0)) / 1000;
+      const earnings = durationSec * state.session.effectiveRate;
+      state.user.balance += earnings;
+      state.user.totalMined += earnings;
+      state.ledger.push({ 
+        id: 'led_settle_' + now, 
+        timestamp: now, 
+        deltaEcho: earnings, 
+        reason: 'session_settlement', 
+        sessionId: state.session.id, 
+        hash: btoa(state.session.id + earnings) 
+      });
+      state.streak.lastSessionEndAt = state.session.endTime;
+      state.streak.graceEndsAt = state.session.endTime + STREAK_GRACE_PERIOD_MS;
+      state.session.isActive = false;
+      state.session.status = 'settled';
+      changed = true;
+    }
+
+    if (changed) {
+      await this.saveState(state);
+    }
+    return state;
+  }
+
   static async startSession(): Promise<AppState> {
     const state = await this.getState();
     const now = Date.now();
@@ -127,21 +179,8 @@ export class AuthoritativeServer {
   }
   
   static async settleSessions(): Promise<AppState> {
-    const state = await this.getState();
-    const now = Date.now();
-    if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
-      const durationSec = (state.session.endTime - (state.session.startTime || 0)) / 1000;
-      const earnings = durationSec * state.session.effectiveRate;
-      state.user.balance += earnings;
-      state.user.totalMined += earnings;
-      state.ledger.push({ id: 'led_settle_' + now, timestamp: now, deltaEcho: earnings, reason: 'session_settlement', sessionId: state.session.id, hash: btoa(state.session.id + earnings) });
-      state.streak.lastSessionEndAt = state.session.endTime;
-      state.streak.graceEndsAt = state.session.endTime + STREAK_GRACE_PERIOD_MS;
-      state.session.isActive = false;
-      state.session.status = 'settled';
-      await this.saveState(state);
-    }
-    return state;
+    // This is now integrated into refreshState, but kept for compatibility
+    return this.refreshState();
   }
 
   static async updatePFP(pfpUrl: string): Promise<AppState> {

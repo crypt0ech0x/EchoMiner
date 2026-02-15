@@ -72,7 +72,7 @@ const MineTab: React.FC<MineTabProps> = ({
     : GET_STREAK_MULTIPLIER(state.streak.currentStreak + 1);
 
   return (
-    <div className="px-5 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700 max-w-lg mx-auto">
+    <div className="px-5 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
       
       {/* 1) Top Balance Card */}
       <div className="glass rounded-[32px] p-5 flex items-center justify-between border border-white/10 relative overflow-hidden">
@@ -210,7 +210,7 @@ const MineTab: React.FC<MineTabProps> = ({
                 <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in zoom-in-95 duration-700">
                   <div className="flex flex-col items-center">
                     <span className="text-3xl sm:text-4xl font-black tabular-nums leading-none tracking-tighter text-white">
-                      +{sessionEarnings.toFixed(7).substring(1)}
+                      +{sessionEarnings.toFixed(7)}
                     </span>
                     <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.4em] mt-3 opacity-80">ECHO</p>
                   </div>

@@ -15,7 +15,6 @@ export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -28,10 +27,9 @@ export default function EchoMinerApp() {
       const now = Date.now();
       setCurrentTime(now);
       
-      if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
-        const updated = await AuthoritativeServer.settleSessions();
-        setState(updated);
-      }
+      // Call refreshState every second to handle boost expiry, rate recalculation, and session settling
+      const updated = await AuthoritativeServer.refreshState();
+      setState(updated);
     }, 1000);
     return () => clearInterval(interval);
   }, [state]);
@@ -39,6 +37,7 @@ export default function EchoMinerApp() {
   const sessionEarnings = useMemo(() => {
     if (!state?.session.isActive || !state.session.startTime) return 0;
     const elapsedSec = (currentTime - state.session.startTime) / 1000;
+    // Cap at 24 hours just in case
     return Math.min(elapsedSec * state.session.effectiveRate, 86400 * state.session.effectiveRate);
   }, [state, currentTime]);
 
@@ -49,11 +48,10 @@ export default function EchoMinerApp() {
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-purple-600/20 blur-[100px] rounded-full" />
       <div className="absolute top-1/2 -right-24 w-64 h-64 bg-teal-600/10 blur-[100px] rounded-full" />
       
-      <Layout
-	activeTab={activeTab}
-	setActiveTab={setActiveTab}
-	onOpenProfile={() => setIsProfileOpen(true)}
-	onOpenNotifications={() => setIsNotificationsOpen(true)}
+      <Layout 
+        activeTab={activeTab} 
+        setActiveTab={setActiveTab} 
+        onOpenProfile={() => setIsProfileOpen(true)}
         state={state}
       >
         {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await AuthoritativeServer.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}

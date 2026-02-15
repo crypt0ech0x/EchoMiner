@@ -25,44 +25,48 @@ const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab, onOp
   return (
     <div className="flex flex-col h-full w-full relative z-10 overflow-hidden">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-6 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-            <Pickaxe className="w-6 h-6 text-white" />
+      <header className="shrink-0 w-full">
+        <div className="max-w-lg mx-auto flex items-center justify-between px-6 py-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
+              <Pickaxe className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black leading-none tracking-tight">ECHO<span className="text-teal-400">MINER</span></h1>
+              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Pre-launch Alpha</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-black leading-none tracking-tight">ECHO<span className="text-teal-400">MINER</span></h1>
-            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Pre-launch Alpha</p>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={onOpenNotifications}
+              className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group relative"
+            >
+              <Bell className="w-5 h-5 text-slate-300 group-hover:text-white" />
+              {unreadCount > 0 && (
+                <span className="absolute top-2 right-2 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] font-black text-white border-2 border-[#020617] animate-pulse">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+            <button 
+              onClick={onOpenProfile}
+              className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group"
+            >
+              <User className="w-5 h-5 text-slate-300 group-hover:text-white" />
+            </button>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={onOpenNotifications}
-            className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group relative"
-          >
-            <Bell className="w-5 h-5 text-slate-300 group-hover:text-white" />
-            {unreadCount > 0 && (
-              <span className="absolute top-2 right-2 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] font-black text-white border-2 border-[#020617] animate-pulse">
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </span>
-            )}
-          </button>
-          <button 
-            onClick={onOpenProfile}
-            className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group"
-          >
-            <User className="w-5 h-5 text-slate-300 group-hover:text-white" />
-          </button>
         </div>
       </header>
 
       {/* Content Area */}
       <main className="flex-1 overflow-y-auto no-scrollbar pb-32">
-        {children}
+        <div className="max-w-lg mx-auto w-full">
+          {children}
+        </div>
       </main>
 
       {/* Bottom Nav Bar */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 pointer-events-none">
+      <div className="fixed bottom-0 left-0 right-0 p-6 pointer-events-none z-50">
         <nav className="pointer-events-auto mx-auto max-w-md h-20 glass rounded-[32px] flex items-center justify-around px-4 border border-white/10 shadow-2xl relative overflow-hidden">
           {/* Subtle bottom nav background glow */}
           <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent"></div>
