@@ -15,7 +15,7 @@ export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [drawerView, setDrawerView] = useState<DrawerSubView>('main');
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export default function EchoMinerApp() {
     return Math.min(elapsedSec * state.session.effectiveRate, 86400 * state.session.effectiveRate);
   }, [state, currentTime]);
 
-  if (!state) return <div className="h-screen bg-background flex items-center justify-center">Initializing Voyager Node...</div>;
+  if (!state) return <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">Initializing Voyager Node...</div>;
 
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
@@ -50,8 +50,8 @@ export default function EchoMinerApp() {
       <Layout 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
-        onOpenProfile={() => { setDrawerView('main'); setIsProfileOpen(true); }}
-        onOpenNotifications={() => { setDrawerView('notifications'); setIsProfileOpen(true); }}
+        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
         state={state}
       >
         {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await AuthoritativeServer.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
@@ -61,11 +61,11 @@ export default function EchoMinerApp() {
       </Layout>
 
       <ProfileDrawer 
-        isOpen={isProfileOpen} 
-        onClose={() => setIsProfileOpen(false)} 
+        isOpen={isProfileOpen || isNotificationsOpen} 
+        onClose={() => { setIsProfileOpen(false); setIsNotificationsOpen(false); }} 
         state={state} 
         onUpdateUser={setState}
-        initialView={drawerView}
+        initialView={isNotificationsOpen ? 'notifications' : 'main'}
       />
     </div>
   );

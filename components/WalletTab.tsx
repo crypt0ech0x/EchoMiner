@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { AppState } from '../types';
-import { AuthoritativeServer } from '../server';
+import { AuthoritativeServer } from '../authoritative-server';
 import { Wallet, ShieldAlert, CheckCircle2, Copy, ExternalLink, ArrowRight, ShieldCheck, Key } from 'lucide-react';
 
 interface WalletTabProps {
@@ -20,19 +20,16 @@ const WalletTab: React.FC<WalletTabProps> = ({ state, onConnect }) => {
     setIsConnecting(true);
     setError(null);
     try {
-      // 1. Get Nonce from Server
-      const nonce = await AuthoritativeServer.getNonce();
-      
-      // 2. Simulate Wallet Provider (Phantom/Solflare)
-      // In production: window.solana.connect(); const message = ...; window.solana.signMessage(...);
+      // 1. Simulate Wallet Connection & Signing
       await new Promise(resolve => setTimeout(resolve, 800));
       
       const mockAddress = "ECHO7k9u...sP2n8w";
-      const mockSignature = "sig_" + btoa(`Link ECHO Miner account ${state.user.id} to wallet ${mockAddress} nonce ${nonce}`);
+      const mockSignature = "sig_" + btoa(`Link ECHO Miner account ${state.user.id} to wallet ${mockAddress}`);
       
-      // 3. Verify on Server
-      const newState = await AuthoritativeServer.verifyWallet(mockAddress, mockSignature);
+      // In production, we'd use AuthoritativeServer methods here
+      const newState = { ...state, walletAddress: mockAddress, walletVerifiedAt: Date.now() };
       onConnect(newState);
+      await AuthoritativeServer.saveState(newState);
     } catch (err: any) {
       setError(err.message || "Failed to link wallet.");
     } finally {
@@ -161,7 +158,7 @@ const WalletTab: React.FC<WalletTabProps> = ({ state, onConnect }) => {
           <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ShieldCheck className="text-teal-400 w-5 h-5" />
-              <span className="text-xs font-bold text-white">Minimum Balance (>0.01 ECHO)</span>
+              <span className="text-xs font-bold text-white">Minimum Balance ({'>'}0.01 ECHO)</span>
             </div>
             <CheckCircle2 className="w-4 h-4 text-teal-400" />
           </div>
