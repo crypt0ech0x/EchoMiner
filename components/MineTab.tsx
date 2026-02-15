@@ -207,9 +207,9 @@ const MineTab: React.FC<MineTabProps> = ({
               )}
 
               {isActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in zoom-in-95 duration-700">
-                  <div className="flex flex-col items-center">
-                    <span className="text-3xl sm:text-4xl font-black tabular-nums leading-none tracking-tighter text-white">
+                <div className="absolute inset-0 flex flex-col items-center justify-center z-10 animate-in zoom-in-95 duration-700 px-4 text-center">
+                  <div className="flex flex-col items-center max-w-full">
+                    <span className="text-3xl sm:text-4xl font-black tabular-nums leading-none tracking-tighter text-white whitespace-nowrap overflow-visible">
                       +{sessionEarnings.toFixed(7)}
                     </span>
                     <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.4em] mt-3 opacity-80">ECHO</p>

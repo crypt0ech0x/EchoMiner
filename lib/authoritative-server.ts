@@ -4,7 +4,8 @@ import {
   NotificationType, 
   NotificationPreferences,
   ActiveBoost,
-  MiningSession
+  MiningSession,
+  AppNotification
 } from './types';
 import { 
   BASE_MINING_RATE, 
@@ -24,7 +25,13 @@ export class AuthoritativeServer {
     if (typeof window === 'undefined') return this.initializeNewUser();
     const data = localStorage.getItem(this.STORAGE_KEY);
     if (!data) return this.initializeNewUser();
-    return JSON.parse(data);
+    const state = JSON.parse(data);
+    
+    // Recovery/Migration checks
+    if (!state.notifications) state.notifications = [];
+    if (!state.activeBoosts) state.activeBoosts = [];
+    
+    return state;
   }
 
   static async saveState(state: AppState) {
@@ -67,10 +74,6 @@ export class AuthoritativeServer {
     };
   }
 
-  /**
-   * Main heartbeat/sync method. 
-   * Cleans up expired boosts, recalculates rates, and settles sessions.
-   */
   static async refreshState(): Promise<AppState> {
     const state = await this.getState();
     const now = Date.now();
@@ -81,18 +84,11 @@ export class AuthoritativeServer {
     state.activeBoosts = state.activeBoosts.filter(b => b.expiresAt > now);
     if (state.activeBoosts.length !== initialBoostCount) {
       changed = true;
+      // Recalculate if active session
+      if (state.session.isActive) this.recalculateRate(state, now);
     }
 
-    // 2. Recalculate rates if session is active
-    if (state.session.isActive) {
-      const oldRate = state.session.effectiveRate;
-      this.recalculateRate(state, now);
-      if (state.session.effectiveRate !== oldRate) {
-        changed = true;
-      }
-    }
-
-    // 3. Settle sessions if they've reached their end time
+    // 2. Settle sessions if they've reached their end time
     if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
       const durationSec = (state.session.endTime - (state.session.startTime || 0)) / 1000;
       const earnings = durationSec * state.session.effectiveRate;
@@ -177,10 +173,41 @@ export class AuthoritativeServer {
     state.session.purchaseMultiplier = storeMult;
     state.session.effectiveRate = state.session.baseRate * state.session.streakMultiplier * adMult * refMult * storeMult;
   }
-  
-  static async settleSessions(): Promise<AppState> {
-    // This is now integrated into refreshState, but kept for compatibility
-    return this.refreshState();
+
+  // --- Notification Management ---
+  static async addNotification(type: NotificationType, title: string, body: string): Promise<AppState> {
+    const state = await this.getState();
+    const now = Date.now();
+    const notif: AppNotification = {
+      id: 'notif_' + Math.random().toString(36).substr(2, 9),
+      type, title, body, createdAt: now, readAt: null
+    };
+    state.notifications.unshift(notif);
+    await this.saveState(state);
+    return state;
+  }
+
+  static async markNotificationAsRead(id: string): Promise<AppState> {
+    const state = await this.getState();
+    const notif = state.notifications.find(n => n.id === id);
+    if (notif) notif.readAt = Date.now();
+    await this.saveState(state);
+    return state;
+  }
+
+  static async markAllAsRead(): Promise<AppState> {
+    const state = await this.getState();
+    const now = Date.now();
+    state.notifications.forEach(n => { if (!n.readAt) n.readAt = now; });
+    await this.saveState(state);
+    return state;
+  }
+
+  static async clearNotifications(): Promise<AppState> {
+    const state = await this.getState();
+    state.notifications = [];
+    await this.saveState(state);
+    return state;
   }
 
   static async updatePFP(pfpUrl: string): Promise<AppState> {

@@ -9,12 +9,13 @@ import MineTab from '@/components/MineTab';
 import BoostTab from '@/components/BoostTab';
 import StoreTab from '@/components/StoreTab';
 import WalletTab from '@/components/WalletTab';
-import ProfileDrawer from '@/components/ProfileDrawer';
+import ProfileDrawer, { DrawerSubView } from '@/components/ProfileDrawer';
 
 export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [drawerView, setDrawerView] = useState<DrawerSubView>('main');
   const [currentTime, setCurrentTime] = useState(Date.now());
 
   useEffect(() => {
@@ -27,7 +28,6 @@ export default function EchoMinerApp() {
       const now = Date.now();
       setCurrentTime(now);
       
-      // Call refreshState every second to handle boost expiry, rate recalculation, and session settling
       const updated = await AuthoritativeServer.refreshState();
       setState(updated);
     }, 1000);
@@ -37,7 +37,6 @@ export default function EchoMinerApp() {
   const sessionEarnings = useMemo(() => {
     if (!state?.session.isActive || !state.session.startTime) return 0;
     const elapsedSec = (currentTime - state.session.startTime) / 1000;
-    // Cap at 24 hours just in case
     return Math.min(elapsedSec * state.session.effectiveRate, 86400 * state.session.effectiveRate);
   }, [state, currentTime]);
 
@@ -51,7 +50,8 @@ export default function EchoMinerApp() {
       <Layout 
         activeTab={activeTab} 
         setActiveTab={setActiveTab} 
-        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenProfile={() => { setDrawerView('main'); setIsProfileOpen(true); }}
+        onOpenNotifications={() => { setDrawerView('notifications'); setIsProfileOpen(true); }}
         state={state}
       >
         {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await AuthoritativeServer.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
@@ -60,7 +60,13 @@ export default function EchoMinerApp() {
         {activeTab === Tab.WALLET && <WalletTab state={state} onConnect={setState} />}
       </Layout>
 
-      <ProfileDrawer isOpen={isProfileOpen} onClose={() => setIsProfileOpen(false)} state={state} onUpdateUser={setState} />
+      <ProfileDrawer 
+        isOpen={isProfileOpen} 
+        onClose={() => setIsProfileOpen(false)} 
+        state={state} 
+        onUpdateUser={setState}
+        initialView={drawerView}
+      />
     </div>
   );
 }
