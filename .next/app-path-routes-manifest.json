@@ -1,5 +1,17 @@
 {
   "/_global-error/page": "/_global-error",
   "/_not-found/page": "/_not-found",
+  "/api/boost/activate/route": "/api/boost/activate",
+  "/api/mining/refresh/route": "/api/mining/refresh",
+  "/api/mining/start/route": "/api/mining/start",
+  "/api/notifications/preferences/route": "/api/notifications/preferences",
+  "/api/notifications/route": "/api/notifications",
+  "/api/profile/route": "/api/profile",
+  "/api/profile/verify-email/route": "/api/profile/verify-email",
+  "/api/snapshot/route": "/api/snapshot",
+  "/api/state/route": "/api/state",
+  "/api/store/checkout/route": "/api/store/checkout",
+  "/api/store/webhook/route": "/api/store/webhook",
+  "/api/wallet/link/route": "/api/wallet/link",
   "/page": "/"
 }

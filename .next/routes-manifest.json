@@ -39,6 +39,78 @@
       "regex": "^/_not\\-found(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/api/boost/activate",
+      "regex": "^/api/boost/activate(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/boost/activate(?:/)?$"
+    },
+    {
+      "page": "/api/mining/refresh",
+      "regex": "^/api/mining/refresh(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mining/refresh(?:/)?$"
+    },
+    {
+      "page": "/api/mining/start",
+      "regex": "^/api/mining/start(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mining/start(?:/)?$"
+    },
+    {
+      "page": "/api/notifications",
+      "regex": "^/api/notifications(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/notifications(?:/)?$"
+    },
+    {
+      "page": "/api/notifications/preferences",
+      "regex": "^/api/notifications/preferences(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/notifications/preferences(?:/)?$"
+    },
+    {
+      "page": "/api/profile",
+      "regex": "^/api/profile(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/profile(?:/)?$"
+    },
+    {
+      "page": "/api/profile/verify-email",
+      "regex": "^/api/profile/verify\\-email(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/profile/verify\\-email(?:/)?$"
+    },
+    {
+      "page": "/api/snapshot",
+      "regex": "^/api/snapshot(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/snapshot(?:/)?$"
+    },
+    {
+      "page": "/api/state",
+      "regex": "^/api/state(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/state(?:/)?$"
+    },
+    {
+      "page": "/api/store/checkout",
+      "regex": "^/api/store/checkout(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/store/checkout(?:/)?$"
+    },
+    {
+      "page": "/api/store/webhook",
+      "regex": "^/api/store/webhook(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/store/webhook(?:/)?$"
+    },
+    {
+      "page": "/api/wallet/link",
+      "regex": "^/api/wallet/link(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/wallet/link(?:/)?$"
     }
   ],
   "dataRoutes": [],

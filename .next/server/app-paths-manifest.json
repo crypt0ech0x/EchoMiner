@@ -1,5 +1,17 @@
 {
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/api/boost/activate/route": "app/api/boost/activate/route.js",
+  "/api/mining/refresh/route": "app/api/mining/refresh/route.js",
+  "/api/mining/start/route": "app/api/mining/start/route.js",
+  "/api/notifications/preferences/route": "app/api/notifications/preferences/route.js",
+  "/api/notifications/route": "app/api/notifications/route.js",
+  "/api/profile/route": "app/api/profile/route.js",
+  "/api/profile/verify-email/route": "app/api/profile/verify-email/route.js",
+  "/api/snapshot/route": "app/api/snapshot/route.js",
+  "/api/state/route": "app/api/state/route.js",
+  "/api/store/checkout/route": "app/api/store/checkout/route.js",
+  "/api/store/webhook/route": "app/api/store/webhook/route.js",
+  "/api/wallet/link/route": "app/api/wallet/link/route.js",
   "/page": "app/page.js"
 }
