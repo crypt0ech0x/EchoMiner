@@ -16,11 +16,13 @@ import {
 } from "lucide-react";
 
 type Props = {
-  // Optional: pass mined amount from your app state if you have it
   totalMinedEcho?: number;
-  // Optional: if you already store verified wallet address in your user profile
   verifiedWalletAddress?: string | null;
 };
+
+function verifiedKey(address: string) {
+  return `echo:walletVerified:${address}`;
+}
 
 export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = null }: Props) {
   const { connection } = useConnection();
@@ -33,10 +35,41 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
-  // If you already have a verified wallet stored in your DB, reflect it
+  // 1) If you already have a verified wallet stored server-side, reflect it
   useEffect(() => {
     if (verifiedWalletAddress && verifiedWalletAddress.length > 0) setIsVerified(true);
   }, [verifiedWalletAddress]);
+
+  // 2) Persist verification across tab switches (component unmounts)
+  useEffect(() => {
+    if (!address) {
+      setIsVerified(false);
+      return;
+    }
+
+    // If server says it's verified, trust server
+    if (verifiedWalletAddress && verifiedWalletAddress === address) {
+      setIsVerified(true);
+      return;
+    }
+
+    // Otherwise, load local verification flag
+    try {
+      const saved = localStorage.getItem(verifiedKey(address));
+      setIsVerified(saved === "1");
+    } catch {
+      // ignore if storage unavailable
+      setIsVerified(false);
+    }
+  }, [address, verifiedWalletAddress]);
+
+  // 3) Clear verified UI state when wallet disconnects
+  useEffect(() => {
+    if (!connected) {
+      setIsVerified(false);
+      setSolBalance(null);
+    }
+  }, [connected]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,7 +93,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      // fallback (rarely needed)
       const ta = document.createElement("textarea");
       ta.value = text;
       document.body.appendChild(ta);
@@ -71,7 +103,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
   }
 
   function explorerUrl(pubkey: string) {
-    // mainnet by default; change to devnet if you test there
     return `https://solscan.io/account/${pubkey}`;
   }
 
@@ -90,22 +121,19 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
     try {
       setIsVerifying(true);
 
-      // Ask server for a nonce challenge
       const challengeRes = await fetch("/api/wallet/challenge", { method: "POST" });
       if (!challengeRes.ok) throw new Error("Could not start verification. Try again.");
       const { nonce } = (await challengeRes.json()) as { nonce: string };
 
       const message =
-  	`ECHO Wallet Verification\n` +
-  	`Wallet: ${publicKey.toBase58()}\n` +
-  	`Nonce: ${nonce}\n` +
-  	`\nBy signing this message, you verify ownership for ECHO airdrop eligibility.`;
+        `ECHO Wallet Verification\n` +
+        `Wallet: ${publicKey.toBase58()}\n` +
+        `Nonce: ${nonce}\n` +
+        `\nBy signing this message, you verify ownership for ECHO airdrop eligibility.`;
 
       const encoded = new TextEncoder().encode(message);
-
       const signature = await signMessage(encoded);
 
-      // Send signature to server for verification + binding
       const verifyRes = await fetch("/api/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -113,13 +141,20 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
           publicKey: publicKey.toBase58(),
           nonce,
           message,
-          signature: Array.from(signature), // Uint8Array -> number[]
+          signature: Array.from(signature),
         }),
       });
 
       if (!verifyRes.ok) {
         const data = await verifyRes.json().catch(() => null);
         throw new Error(data?.error || "Verification failed.");
+      }
+
+      // Save verified status locally so it persists across tab switches
+      try {
+        localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
+      } catch {
+        // ignore
       }
 
       setIsVerified(true);
@@ -130,7 +165,7 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
     }
   }
 
-  const walletLinked = connected; // "linked" means connected; "verified" is signMessage flow
+  const walletLinked = connected;
 
   return (
     <div className="px-6 space-y-6 animate-in slide-in-from-left duration-500">
@@ -139,7 +174,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
         <p className="text-slate-400 text-sm">Secure your ECHO for the mainnet airdrop.</p>
       </div>
 
-      {/* Main Connection Card */}
       <div className="glass rounded-[32px] p-8 border border-white/10 shadow-2xl overflow-hidden relative">
         <div className="absolute top-0 right-0 w-48 h-48 bg-purple-600/10 blur-[80px] -z-10" />
 
@@ -147,7 +181,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
           <div className="text-xs text-slate-500 font-bold uppercase tracking-widest">
             Solana Wallet Connection
           </div>
-          {/* Official connect UI */}
           <WalletMultiButton />
         </div>
 
@@ -187,9 +220,11 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
 
                 <div className="mt-2 text-[11px] text-white/50">
                   Wallet: <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
-		<span className="text-white/50">|</span>{" "}
-		SOL:{" "}
-		<span className="text-white/70">{solBalance === null ? "..." : solBalance.toFixed(4)}</span>
+                  <span className="text-white/50">|</span>{" "}
+                  SOL:{" "}
+                  <span className="text-white/70">
+                    {solBalance === null ? "..." : solBalance.toFixed(4)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -290,7 +325,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
         )}
       </div>
 
-      {/* Snapshot Info */}
       <div className="glass rounded-[24px] p-6 border border-yellow-500/10 flex gap-4">
         <ShieldAlert className="w-6 h-6 text-yellow-500 shrink-0" />
         <div className="space-y-1">
@@ -305,7 +339,6 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
         </div>
       </div>
 
-      {/* Eligibility Checklist */}
       <div className="space-y-4">
         <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest ml-1">
           Eligibility Checklist
@@ -351,5 +384,3 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
     </div>
   );
 }
-
-
