@@ -253,7 +253,7 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
                   disabled
                   className="w-full h-16 bg-teal-500/10 border border-teal-500/20 rounded-[24px] text-xs font-black text-teal-300 uppercase tracking-widest cursor-not-allowed"
                 >
-                  Wallet Verified"
+                  Wallet Verified
                 </button>
               )}
 
