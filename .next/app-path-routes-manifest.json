@@ -12,6 +12,8 @@
   "/api/state/route": "/api/state",
   "/api/store/checkout/route": "/api/store/checkout",
   "/api/store/webhook/route": "/api/store/webhook",
+  "/api/wallet/challenge/route": "/api/wallet/challenge",
   "/api/wallet/link/route": "/api/wallet/link",
+  "/api/wallet/verify/route": "/api/wallet/verify",
   "/page": "/"
 }

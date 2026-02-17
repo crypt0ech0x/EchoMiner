@@ -1,4 +1,4 @@
-
+﻿
 "use client";
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -61,7 +61,12 @@ export default function EchoMinerApp() {
         {activeTab === Tab.MINE && <MineTab state={state} sessionEarnings={sessionEarnings} onStartSession={async () => setState(await EchoAPI.startSession())} totalMultiplier={state.session.isActive ? (state.session.effectiveRate / state.session.baseRate) : 1} effectiveRate={state.session.effectiveRate} currentTime={currentTime} onOpenBoosts={() => setActiveTab(Tab.BOOST)} />}
         {activeTab === Tab.BOOST && <BoostTab state={state} onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())} currentTime={currentTime} />}
         {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
-        {activeTab === Tab.WALLET && <WalletTab state={state} onConnect={setState} />}
+        {activeTab === Tab.WALLET && (
+  		<WalletTab
+    		totalMinedEcho={state.user.totalMined}
+  		  verifiedWalletAddress={state.walletAddress ?? null}
+	  />
+	)}
       </Layout>
 
       <ProfileDrawer 
@@ -74,3 +79,4 @@ export default function EchoMinerApp() {
     </div>
   );
 }
+

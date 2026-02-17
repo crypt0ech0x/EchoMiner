@@ -1,11 +1,6 @@
-
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+﻿import type { Metadata } from "next";
 import "./globals.css";
-// Explicitly import React to resolve namespace issues for React.ReactNode in the type definition
-import React from 'react';
-
-const inter = Inter({ subsets: ["latin"] });
+import SolanaProviders from "../components/SolanaProviders";
 
 export const metadata: Metadata = {
   title: "ECHO Miner",
@@ -13,16 +8,14 @@ export const metadata: Metadata = {
   viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} bg-background text-white antialiased`}>
-        {children}
+      <body className="bg-background text-white antialiased">
+        <SolanaProviders>{children}</SolanaProviders>
       </body>
     </html>
   );
 }
+
+

@@ -108,11 +108,17 @@ const App: React.FC = () => {
         return <BoostTab state={state} onApplyAdBoost={handleApplyAdBoost} currentTime={currentTime} />;
       case Tab.STORE:
         return <StoreTab state={state} onPurchase={handlePurchaseUpdate} />;
-      case Tab.WALLET:
-        return <WalletTab state={state} onConnect={handleWalletUpdate} />;
-      default: return null;
-    }
-  };
+     case Tab.WALLET:
+      return (
+        <WalletTab
+          totalMinedEcho={state.user.totalMined}
+          verifiedWalletAddress={state.walletAddress ?? null}
+        />
+      );
+    default:
+      return null;
+  }
+};
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#020617] text-white relative overflow-hidden">

@@ -107,10 +107,22 @@
       "namedRegex": "^/api/store/webhook(?:/)?$"
     },
     {
+      "page": "/api/wallet/challenge",
+      "regex": "^/api/wallet/challenge(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/wallet/challenge(?:/)?$"
+    },
+    {
       "page": "/api/wallet/link",
       "regex": "^/api/wallet/link(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/api/wallet/link(?:/)?$"
+    },
+    {
+      "page": "/api/wallet/verify",
+      "regex": "^/api/wallet/verify(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/wallet/verify(?:/)?$"
     }
   ],
   "dataRoutes": [],

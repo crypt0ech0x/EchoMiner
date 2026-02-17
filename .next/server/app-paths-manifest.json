@@ -12,6 +12,8 @@
   "/api/state/route": "app/api/state/route.js",
   "/api/store/checkout/route": "app/api/store/checkout/route.js",
   "/api/store/webhook/route": "app/api/store/webhook/route.js",
+  "/api/wallet/challenge/route": "app/api/wallet/challenge/route.js",
   "/api/wallet/link/route": "app/api/wallet/link/route.js",
+  "/api/wallet/verify/route": "app/api/wallet/verify/route.js",
   "/page": "app/page.js"
 }
