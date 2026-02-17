@@ -187,10 +187,9 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
 
                 <div className="mt-2 text-[11px] text-white/50">
                   Wallet: <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
-                  â€¢ SOL:{" "}
-                  <span className="text-white/70">
-                    {solBalance === null ? "â€¦" : solBalance.toFixed(4)}
-                  </span>
+		<span className="text-white/50">|</span>{" "}
+		SOL:{" "}
+		<span className="text-white/70">{solBalance === null ? "..." : solBalance.toFixed(4)}</span>
                 </div>
               </div>
             </div>
