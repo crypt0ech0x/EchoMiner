@@ -17,60 +17,66 @@ import {
 
 type Props = {
   totalMinedEcho?: number;
+
+  /**
+   * Server truth:
+   * - null => not verified (or no wallet on file)
+   * - string => verified wallet address stored in DB for this user/session
+   */
   verifiedWalletAddress?: string | null;
+
+  /**
+   * Optional but strongly recommended:
+   * Parent should refetch /api/state after verification
+   * so the whole app state updates from the DB.
+   */
+  onVerified?: () => void;
 };
 
 function verifiedKey(address: string) {
   return `echo:walletVerified:${address}`;
 }
 
-export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = null }: Props) {
+export default function WalletTab({
+  totalMinedEcho = 0,
+  verifiedWalletAddress = null,
+  onVerified,
+}: Props) {
   const { connection } = useConnection();
   const { publicKey, connected, wallet, signMessage } = useWallet();
 
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [isVerified, setIsVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
-  // 1) If you already have a verified wallet stored server-side, reflect it
-  useEffect(() => {
-    if (verifiedWalletAddress && verifiedWalletAddress.length > 0) setIsVerified(true);
-  }, [verifiedWalletAddress]);
+  /**
+   * Verified rule:
+   * - If server gave us a verified wallet address, we trust it (production truth).
+   * - Otherwise we can *optionally* use localStorage as a temporary UX helper.
+   */
+  const isVerified = useMemo(() => {
+    if (!address) return false;
+    if (verifiedWalletAddress && verifiedWalletAddress === address) return true;
 
-  // 2) Persist verification across tab switches (component unmounts)
-  useEffect(() => {
-    if (!address) {
-      setIsVerified(false);
-      return;
-    }
-
-    // If server says it's verified, trust server
-    if (verifiedWalletAddress && verifiedWalletAddress === address) {
-      setIsVerified(true);
-      return;
-    }
-
-    // Otherwise, load local verification flag
+    // Optional fallback: local cache (helps UX if parent hasn't refetched yet)
     try {
-      const saved = localStorage.getItem(verifiedKey(address));
-      setIsVerified(saved === "1");
+      return localStorage.getItem(verifiedKey(address)) === "1";
     } catch {
-      // ignore if storage unavailable
-      setIsVerified(false);
+      return false;
     }
   }, [address, verifiedWalletAddress]);
 
-  // 3) Clear verified UI state when wallet disconnects
+  // Clear balance + errors when disconnecting
   useEffect(() => {
     if (!connected) {
-      setIsVerified(false);
       setSolBalance(null);
+      setError(null);
     }
   }, [connected]);
 
+  // Load SOL balance
   useEffect(() => {
     let cancelled = false;
 
@@ -79,8 +85,12 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
         setSolBalance(null);
         return;
       }
-      const lamports = await connection.getBalance(publicKey, { commitment: "confirmed" });
-      if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
+      try {
+        const lamports = await connection.getBalance(publicKey, { commitment: "confirmed" });
+        if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
+      } catch {
+        if (!cancelled) setSolBalance(null);
+      }
     }
 
     loadBalance();
@@ -121,22 +131,33 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
     try {
       setIsVerifying(true);
 
-      const challengeRes = await fetch("/api/wallet/challenge", { method: "POST" });
+      // 1) Get nonce challenge (bound to this wallet address)
+      const challengeRes = await fetch("/api/wallet/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+        credentials: "include",
+      });
+
       if (!challengeRes.ok) throw new Error("Could not start verification. Try again.");
       const { nonce } = (await challengeRes.json()) as { nonce: string };
 
+      // 2) Create message (plain ASCII only: no fancy bullets/dashes)
       const message =
-        `ECHO Wallet Verification\n` +
+        "ECHO Wallet Verification\n" +
         `Wallet: ${publicKey.toBase58()}\n` +
         `Nonce: ${nonce}\n` +
-        `\nBy signing this message, you verify ownership for ECHO airdrop eligibility.`;
+        "\nBy signing this message, you verify ownership for ECHO airdrop eligibility.";
 
+      // 3) Sign message
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
 
+      // 4) Verify server-side + set session cookie / bind wallet in DB
       const verifyRes = await fetch("/api/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           publicKey: publicKey.toBase58(),
           nonce,
@@ -150,14 +171,15 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
         throw new Error(data?.error || "Verification failed.");
       }
 
-      // Save verified status locally so it persists across tab switches
+      // UX helper: cache locally so tab-switch doesn't flicker
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
       } catch {
         // ignore
       }
 
-      setIsVerified(true);
+      // IMPORTANT: tell parent to refetch /api/state so server truth updates app-wide
+      onVerified?.();
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
     } finally {
@@ -218,8 +240,10 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
                   </button>
                 </div>
 
+                {/* NOTE: no special bullets, no weird encoding */}
                 <div className="mt-2 text-[11px] text-white/50">
-                  Wallet: <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
+                  Wallet:{" "}
+                  <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
                   <span className="text-white/50">|</span>{" "}
                   SOL:{" "}
                   <span className="text-white/70">
@@ -362,7 +386,7 @@ export default function WalletTab({ totalMinedEcho = 0, verifiedWalletAddress = 
           <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ShieldCheck className="text-teal-400 w-5 h-5" />
-              <span className="text-xs font-bold text-white">Minimum Balance (&gt;0.01 ECHO)</span>
+              <span className="text-xs font-bold text-white">Minimum Balance (&gt; 0.01 ECHO)</span>
             </div>
             <CheckCircle2 className="w-4 h-4 text-teal-400" />
           </div>

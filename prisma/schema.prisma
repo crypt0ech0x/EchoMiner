@@ -1,0 +1,126 @@
+// ==============================
+// DATABASE CONNECTION
+// ==============================
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==============================
+// USER
+// ==============================
+
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  email String? @unique
+
+  // Total mined across all sessions (server truth)
+  totalMinedEcho Float @default(0)
+
+  wallet        Wallet?
+  miningSession MiningSession?
+  miningHistory MiningHistory[]
+  sessions      Session[]
+
+  @@index([totalMinedEcho])
+}
+
+// ==============================
+// WALLET (1 per user)
+// ==============================
+
+model Wallet {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  address    String    @unique
+  verified   Boolean   @default(false)
+  verifiedAt DateTime?
+
+  userId String? @unique
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// ==============================
+// WALLET NONCE (for signature challenge)
+// ==============================
+
+model WalletNonce {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  walletAddress String
+  nonce         String
+
+  @@index([walletAddress])
+  @@index([nonce])
+}
+
+// ==============================
+// ACTIVE MINING SESSION (1 per user)
+// ==============================
+
+model MiningSession {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  isActive Boolean @default(false)
+
+  startedAt     DateTime?
+  lastAccruedAt DateTime?
+
+  baseRatePerHr Float @default(0)
+  multiplier    Float @default(1)
+
+  sessionMined Float @default(0)
+
+  @@index([isActive])
+}
+
+// ==============================
+// MINING HISTORY (AUDIT LOG)
+// ==============================
+
+model MiningHistory {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  startedAt DateTime
+  endedAt   DateTime
+
+  baseRatePerHr Float
+  multiplier    Float
+  totalMined    Float
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Helps invalidate sessions quickly if needed
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+}

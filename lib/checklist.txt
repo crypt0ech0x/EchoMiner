@@ -1,0 +1,9 @@
+How to store wallet verification in DB
+
+How to record mining to database instead of local state
+
+How to generate the final airdrop snapshot safely
+
+How to prevent wallet farming / bots
+
+Or how to deploy Prisma to Vercel properly

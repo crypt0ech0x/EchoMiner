@@ -1,44 +1,82 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getUserFromSessionCookie } from "@/lib/auth";
 
-import { NextRequest, NextResponse } from 'next/server';
-import { BASE_MINING_RATE } from '@/lib/constants';
+export async function GET() {
+  try {
+    const user = await getUserFromSessionCookie();
 
-export async function POST(req: NextRequest) {
-  const { state } = await req.json();
+    // Not logged in yet → return a safe default shape
+    if (!user) {
+      return NextResponse.json({
+        ok: true,
+        authed: false,
+        wallet: {
+          address: null as string | null,
+          verified: false,
+          verifiedAt: null as string | null,
+        },
+        user: {
+          totalMinedEcho: 0,
+        },
+        session: {
+          isActive: false,
+          startedAt: null as string | null,
+          lastAccruedAt: null as string | null,
+          baseRatePerHr: 0,
+          multiplier: 1,
+          sessionMined: 0,
+        },
+      });
+    }
 
-  if (!state) {
-    const now = Date.now();
-    const refCode = 'ECHO' + Math.floor(1000 + Math.random() * 9000);
-    const newState = {
+    // Pull fresh truth from DB
+    const [dbUser, wallet, miningSession] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: user.id },
+        select: { id: true, totalMinedEcho: true, email: true },
+      }),
+      prisma.wallet.findFirst({
+        where: { userId: user.id },
+        select: { address: true, verified: true, verifiedAt: true },
+      }),
+      prisma.miningSession.findUnique({
+        where: { userId: user.id },
+        select: {
+          isActive: true,
+          startedAt: true,
+          lastAccruedAt: true,
+          baseRatePerHr: true,
+          multiplier: true,
+          sessionMined: true,
+        },
+      }),
+    ]);
+
+    return NextResponse.json({
+      ok: true,
+      authed: true,
       user: {
-        id: 'user_' + Math.random().toString(36).substr(2, 9),
-        username: refCode,
-        balance: 0,
-        totalMined: 0,
-        referrals: 0,
-        joinedDate: now,
-        guest: true,
-        riskScore: 0,
-        referralCode: refCode,
-        isAdmin: false,
-        priorityAirdrop: false,
-        notificationPreferences: {
-          session_end: true,
-          streak_grace_warning: true,
-          boost_expired: true,
-          weekly_summary: true,
-          airdrop_announcement: true
-        }
+        id: dbUser?.id ?? user.id,
+        email: dbUser?.email ?? null,
+        totalMinedEcho: dbUser?.totalMinedEcho ?? 0,
       },
-      streak: { currentStreak: 0, lastSessionStartAt: null, lastSessionEndAt: null, graceEndsAt: null },
+      wallet: {
+        address: wallet?.address ?? null,
+        verified: wallet?.verified ?? false,
+        verifiedAt: wallet?.verifiedAt ? wallet.verifiedAt.toISOString() : null,
+      },
       session: {
-        id: '', isActive: false, startTime: null, endTime: null, baseRate: BASE_MINING_RATE,
-        streakMultiplier: 1, boostMultiplier: 1, purchaseMultiplier: 1, effectiveRate: 0, status: 'ended'
+        isActive: miningSession?.isActive ?? false,
+        startedAt: miningSession?.startedAt ? miningSession.startedAt.toISOString() : null,
+        lastAccruedAt: miningSession?.lastAccruedAt ? miningSession.lastAccruedAt.toISOString() : null,
+        baseRatePerHr: miningSession?.baseRatePerHr ?? 0,
+        multiplier: miningSession?.multiplier ?? 1,
+        sessionMined: miningSession?.sessionMined ?? 0,
       },
-      activeBoosts: [], ledger: [], purchaseHistory: [], notifications: [],
-      walletAddress: null, walletVerifiedAt: null, currentNonce: null
-    };
-    return NextResponse.json(newState);
+    });
+  } catch (err) {
+    console.error("state GET error:", err);
+    return NextResponse.json({ ok: false, error: "State fetch failed" }, { status: 500 });
   }
-
-  return NextResponse.json(state);
 }
