@@ -1,0 +1,3 @@
+{
+  "/api/mining/stop/route": "app/api/mining/stop/route.js"
+}

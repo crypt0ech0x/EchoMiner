@@ -1,54 +1,74 @@
-import crypto from "crypto";
+// lib/auth.ts
+import "server-only";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import crypto from "crypto";
 
 const COOKIE_NAME = "echo_session";
-const SESSION_DAYS = 14;
+const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-function sha256(input: string) {
-  return crypto.createHash("sha256").update(input).digest("hex");
+function newSessionId() {
+  return crypto.randomBytes(32).toString("hex");
 }
 
-export async function createSessionForUser(userId: string) {
-  const token = crypto.randomBytes(32).toString("hex"); // raw cookie token
-  const tokenHash = sha256(token); // stored in DB
-  const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+export async function createSessionForUser(
+  userId: string,
+  opts?: { maxAgeSeconds?: number }
+) {
+  const maxAgeSeconds = opts?.maxAgeSeconds ?? DEFAULT_SESSION_TTL_SECONDS;
+
+  const sessionId = newSessionId();
+  const expiresAt = new Date(Date.now() + maxAgeSeconds * 1000);
 
   await prisma.session.create({
-    data: {
-      id: tokenHash, // override default cuid()
-      userId,
-      expiresAt,
-    },
+    data: { id: sessionId, userId, expiresAt },
   });
 
-  cookies().set({
-    name: COOKIE_NAME,
-    value: token,
+  // Next.js 16: cookies() is async in this context
+  const cookieStore = await cookies();
+  cookieStore.set(COOKIE_NAME, sessionId, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    expires: expiresAt,
+    maxAge: maxAgeSeconds,
   });
 
-  return { expiresAt };
+  return { sessionId, expiresAt };
+}
+
+export async function revokeSessionCookie() {
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get(COOKIE_NAME)?.value;
+
+  if (sessionId) {
+    // optional but recommended: revoke in DB so it can't be reused
+    await prisma.session.updateMany({
+      where: { id: sessionId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+
+  cookieStore.delete(COOKIE_NAME);
 }
 
 export async function getUserFromSessionCookie() {
-  const token = cookies().get(COOKIE_NAME)?.value;
-  if (!token) return null;
-
-  const tokenHash = sha256(token);
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get(COOKIE_NAME)?.value;
+  if (!sessionId) return null;
 
   const session = await prisma.session.findUnique({
-    where: { id: tokenHash },
-    include: { user: { include: { wallet: true } } },
+    where: { id: sessionId },
+    include: {
+      user: {
+        include: { wallet: true },
+      },
+    },
   });
 
   if (!session) return null;
   if (session.revokedAt) return null;
-  if (session.expiresAt.getTime() < Date.now()) return null;
+  if (session.expiresAt.getTime() <= Date.now()) return null;
 
   return session.user;
 }

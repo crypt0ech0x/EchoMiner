@@ -1,9 +1,11 @@
 {
   "/_global-error/page": "app/_global-error/page.js",
   "/_not-found/page": "app/_not-found/page.js",
+  "/api/auth/logout/route": "app/api/auth/logout/route.js",
   "/api/boost/activate/route": "app/api/boost/activate/route.js",
   "/api/mining/refresh/route": "app/api/mining/refresh/route.js",
   "/api/mining/start/route": "app/api/mining/start/route.js",
+  "/api/mining/stop/route": "app/api/mining/stop/route.js",
   "/api/notifications/preferences/route": "app/api/notifications/preferences/route.js",
   "/api/notifications/route": "app/api/notifications/route.js",
   "/api/profile/route": "app/api/profile/route.js",

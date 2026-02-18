@@ -41,6 +41,12 @@
       "namedRegex": "^/_not\\-found(?:/)?$"
     },
     {
+      "page": "/api/auth/logout",
+      "regex": "^/api/auth/logout(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/auth/logout(?:/)?$"
+    },
+    {
       "page": "/api/boost/activate",
       "regex": "^/api/boost/activate(?:/)?$",
       "routeKeys": {},
@@ -57,6 +63,12 @@
       "regex": "^/api/mining/start(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/api/mining/start(?:/)?$"
+    },
+    {
+      "page": "/api/mining/stop",
+      "regex": "^/api/mining/stop(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/api/mining/stop(?:/)?$"
     },
     {
       "page": "/api/notifications",
