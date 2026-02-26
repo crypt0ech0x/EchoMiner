@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Tab, AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
@@ -11,8 +11,8 @@ import WalletTab from "@/components/WalletTab";
 import ProfileDrawer from "@/components/ProfileDrawer";
 
 /**
- * This matches the REAL response shape from /api/state
- * (you showed: { ok, authed, wallet, user, session })
+ * This matches your /api/state response:
+ * {"ok":true,"authed":false,"wallet":{"address":null,"verified":false,...},"user":{"totalMinedEcho":0},"session":{...}}
  */
 type ApiState = {
   ok: boolean;
@@ -36,47 +36,27 @@ type ApiState = {
 };
 
 function toAppState(api: ApiState): AppState {
-  const startMs = api.session.startedAt ? Date.parse(api.session.startedAt) : null;
-
-  // Convert server session rates -> what your MineTab UI expects
-  const baseRatePerSec = (api.session.baseRatePerHr || 0) / 3600;
-  const effectiveRatePerSec = baseRatePerSec * (api.session.multiplier || 1);
-
-  // Build an AppState that matches what your components already use
-  // (keeping your existing field names like state.user.totalMined and state.walletAddress)
+  // Convert API -> UI state shape your components expect
   return {
-    // --- user ---
-    user: {
-      ...(({} as any) as AppState["user"]),
-      totalMined: api.user.totalMinedEcho ?? 0,
-      totalMinedEcho: api.user.totalMinedEcho ?? 0,
-    },
-
-    // --- wallet ---
+    // keep any other fields your AppState may have (if they exist)
+    // if AppState has more required fields, add them here.
     walletAddress: api.wallet.address,
-    wallet: {
-      address: api.wallet.address,
-      verified: api.wallet.verified,
-      verifiedAt: api.wallet.verifiedAt,
+    walletVerified: api.wallet.verified,
+    walletVerifiedAt: api.wallet.verifiedAt,
+
+    user: {
+      totalMined: api.user.totalMinedEcho ?? 0,
     },
 
-    // --- session ---
     session: {
-      ...(({} as any) as AppState["session"]),
       isActive: api.session.isActive,
-      startTime: startMs ?? undefined, // your old UI used startTime
       startedAt: api.session.startedAt,
       lastAccruedAt: api.session.lastAccruedAt,
-      baseRate: baseRatePerSec,
-      effectiveRate: effectiveRatePerSec,
-      baseRatePerHr: api.session.baseRatePerHr,
-      multiplier: api.session.multiplier,
-      sessionMined: api.session.sessionMined,
+      baseRatePerHr: api.session.baseRatePerHr ?? 0,
+      multiplier: api.session.multiplier ?? 1,
+      sessionMined: api.session.sessionMined ?? 0,
     },
-
-    // --- keep any other fields your Layout/ProfileDrawer expect ---
-    ...(({} as any) as Omit<AppState, "user" | "walletAddress" | "wallet" | "session">),
-  };
+  } as unknown as AppState;
 }
 
 export default function EchoMinerApp() {
@@ -85,109 +65,91 @@ export default function EchoMinerApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  const [currentTime, setCurrentTime] = useState(Date.now());
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
 
-  const mountedRef = useRef(true);
-
-  async function fetchState() {
+  async function loadState() {
     setLoadError(null);
     try {
-      const raw = (await EchoAPI.getState()) as unknown;
+      const raw: unknown = await EchoAPI.getState();
 
-      // Hard-validate minimal shape so iPhone doesn't crash on weird responses
-      if (!raw || typeof raw !== "object" || typeof (raw as any).ok !== "boolean") {
-        throw new Error("Bad /api/state response");
+      if (!raw || typeof raw !== "object") throw new Error("Bad state response (not an object).");
+
+      const api = raw as Partial<ApiState>;
+      if (typeof api.ok !== "boolean" || !api.wallet || !api.user || !api.session) {
+        throw new Error("Bad state response (missing fields).");
       }
 
-      const api = raw as ApiState;
-      if (!mountedRef.current) return;
-
-      setState(toAppState(api));
+      setState(toAppState(api as ApiState));
     } catch (e: any) {
-      if (!mountedRef.current) return;
+      setLoadError(e?.message ?? "Failed to load state.");
       setState(null);
-      setLoadError(e?.message || "Failed to load state");
     }
   }
 
   useEffect(() => {
-    mountedRef.current = true;
-    fetchState();
-    return () => {
-      mountedRef.current = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadState();
   }, []);
 
-  // Refresh loop (fast only when mining is active)
+  // Refresh loop (calls refresh endpoint if you have one, otherwise just re-load state)
   useEffect(() => {
-    const id = setInterval(async () => {
+    const interval = setInterval(async () => {
       setCurrentTime(Date.now());
-
-      // If we don't have state yet, don't spam calls
-      if (!state) return;
-
       try {
-        // If your EchoAPI.refreshState returns AppState already, keep it.
-        // If it returns ApiState, convert it.
-        const raw = (await EchoAPI.refreshState()) as unknown;
+        // If your EchoAPI.refreshState() returns the API shape, convert it too.
+        const raw: unknown = await EchoAPI.refreshState().catch(() => null);
+        if (!raw || typeof raw !== "object") return;
 
-        // If refreshState returns the same /api/state shape:
-        if (raw && typeof raw === "object" && typeof (raw as any).ok === "boolean") {
-          setState(toAppState(raw as ApiState));
-          return;
-        }
+        const api = raw as Partial<ApiState>;
+        if (typeof api.ok !== "boolean" || !api.wallet || !api.user || !api.session) return;
 
-        // Otherwise assume refreshState already returns AppState:
-        setState(raw as AppState);
+        setState(toAppState(api as ApiState));
       } catch {
-        // Don’t nuke UI on transient refresh errors
+        // ignore refresh errors, keep UI alive
       }
-    }, state?.session?.isActive ? 1000 : 8000);
+    }, 1500);
 
-    return () => clearInterval(id);
-  }, [state]);
+    return () => clearInterval(interval);
+  }, []);
 
+  // With DB-backed sessions, you can show "session earnings" as sessionMined
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
+    return state.session.sessionMined ?? 0;
+  }, [state]);
 
-    const start = (state.session as any).startTime as number | undefined;
-    const effectiveRate = (state.session as any).effectiveRate as number | undefined;
+  const effectiveRatePerHr = useMemo(() => {
+    if (!state) return 0;
+    return (state.session.baseRatePerHr ?? 0) * (state.session.multiplier ?? 1);
+  }, [state]);
 
-    if (!start || !effectiveRate) return 0;
+  const totalMultiplier = useMemo(() => {
+    if (!state?.session?.isActive) return 1;
+    return state.session.multiplier ?? 1;
+  }, [state]);
 
-    const elapsedSec = (currentTime - start) / 1000;
-    const maxSec = 60 * 60 * 3; // 3 hours
-    return Math.max(0, Math.min(elapsedSec, maxSec) * effectiveRate);
-  }, [state, currentTime]);
-
-  if (!state) {
+  if (loadError) {
     return (
-      <div className="h-screen bg-background flex flex-col items-center justify-center text-center px-6">
-        <div className="font-black tracking-widest text-white/20 animate-pulse">
-          Initializing Voyager Node...
-        </div>
-
-        {loadError && (
-          <div className="mt-4 max-w-md w-full text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl p-4">
-            {loadError}
-            <div className="mt-3">
-              <button
-                onClick={fetchState}
-                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-black tracking-widest"
-              >
-                RETRY
-              </button>
-            </div>
-          </div>
-        )}
+      <div className="h-screen w-screen bg-background flex flex-col items-center justify-center text-center p-8">
+        <div className="text-white font-black tracking-widest mb-3">Couldn’t load app state</div>
+        <div className="text-white/50 text-sm mb-6 break-words max-w-[28rem]">{loadError}</div>
+        <button
+          onClick={loadState}
+          className="px-6 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold border border-white/10"
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
-  const verifiedWalletAddress =
-    state.wallet?.verified && state.wallet?.address ? state.wallet.address : null;
+  if (!state) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">
+        Initializing Voyager Node...
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
@@ -205,9 +167,20 @@ export default function EchoMinerApp() {
           <MineTab
             state={state}
             sessionEarnings={sessionEarnings}
-            onStartSession={async () => setState(await EchoAPI.startSession())}
-            totalMultiplier={state.session.isActive ? (state.session.multiplier ?? 1) : 1}
-            effectiveRate={(state.session as any).effectiveRate ?? 0}
+            onStartSession={async () => {
+              const raw: unknown = await EchoAPI.startSession();
+              if (raw && typeof raw === "object") {
+                const api = raw as Partial<ApiState>;
+                if (typeof api.ok === "boolean" && api.wallet && api.user && api.session) {
+                  setState(toAppState(api as ApiState));
+                  return;
+                }
+              }
+              // fallback: re-load state
+              await loadState();
+            }}
+            totalMultiplier={totalMultiplier}
+            effectiveRate={effectiveRatePerHr}
             currentTime={currentTime}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
           />
@@ -216,7 +189,17 @@ export default function EchoMinerApp() {
         {activeTab === Tab.BOOST && (
           <BoostTab
             state={state}
-            onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())}
+            onApplyAdBoost={async () => {
+              const raw: unknown = await EchoAPI.activateAdBoost();
+              if (raw && typeof raw === "object") {
+                const api = raw as Partial<ApiState>;
+                if (typeof api.ok === "boolean" && api.wallet && api.user && api.session) {
+                  setState(toAppState(api as ApiState));
+                  return;
+                }
+              }
+              await loadState();
+            }}
             currentTime={currentTime}
           />
         )}
@@ -225,8 +208,8 @@ export default function EchoMinerApp() {
 
         {activeTab === Tab.WALLET && (
           <WalletTab
-            totalMinedEcho={(state.user as any).totalMinedEcho ?? (state.user as any).totalMined ?? 0}
-            verifiedWalletAddress={verifiedWalletAddress}
+            totalMinedEcho={state.user.totalMined}
+            verifiedWalletAddress={state.walletAddress ?? null}
           />
         )}
       </Layout>
