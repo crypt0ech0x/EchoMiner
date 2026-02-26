@@ -5,8 +5,10 @@
   "scripts": {
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
     "build": "next build",
-    "start": "next start"
-  },
+    "start": "next start",
+    "postinstall": "prisma generate"
+  }
+},
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.0",
     "@prisma/client": "^7.4.0",
