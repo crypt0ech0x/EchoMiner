@@ -1,10 +1,11 @@
 // lib/api.ts
-import { AppState } from "./types";
+import type { AppState, NotificationPreferences } from "./types";
 
 /**
- * Shape returned by /api/state in your new server-driven version
+ * This is the SERVER response shape from /api/state now.
+ * (Matches what you pasted: { ok, authed, wallet, user, session })
  */
-type ApiState = {
+export type ApiState = {
   ok: boolean;
   authed: boolean;
   wallet: {
@@ -23,159 +24,193 @@ type ApiState = {
     multiplier: number;
     sessionMined: number;
   };
-  // server may include other fields; we ignore them safely
-  [k: string]: any;
 };
 
-function safeLoad<T>(key: string): T | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
-  } catch {
-    // If it’s corrupted/old schema, wipe it so the app can boot
-    try {
-      localStorage.removeItem(key);
-    } catch {}
-    return null;
-  }
-}
-
-function safeSave(key: string, value: unknown) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // ignore quota / private mode errors
-  }
-}
-
 /**
- * Convert server ApiState -> your existing AppState shape (keep UI stable)
- * IMPORTANT: This assumes your UI expects:
+ * Convert server ApiState -> your existing AppState used by components.
+ * IMPORTANT: This keeps backwards-compat fields that your UI expects:
  * - state.user.totalMined
  * - state.walletAddress
- * - state.session fields used by MineTab
- *
- * If your AppState differs slightly, adjust only this mapper.
+ * - state.session.sessionMined (or earnings)
  */
-function toAppState(api: ApiState, prev: AppState | null): AppState {
-  const base: any = prev ?? {};
+function apiToAppState(api: ApiState, prev: AppState | null): AppState {
+  // Start from previous state so we don't blow away UI-only fields
+  const base: any = prev ? structuredClone(prev) : {};
 
-  // Keep any UI-only fields you had before, but overwrite server-truth parts.
-  const next: any = {
-    ...base,
-
-    // ---- user ----
-    user: {
-      ...(base.user ?? {}),
-      totalMined: api.user?.totalMinedEcho ?? 0,
-    },
-
-    // ---- wallet ----
-    walletAddress: api.wallet?.address ?? null,
-    walletVerified: !!api.wallet?.verified,
-
-    // ---- session ----
-    session: {
-      ...(base.session ?? {}),
-      isActive: !!api.session?.isActive,
-      startedAt: api.session?.startedAt ? Date.parse(api.session.startedAt) : null,
-      lastAccruedAt: api.session?.lastAccruedAt ? Date.parse(api.session.lastAccruedAt) : null,
-      baseRatePerHr: api.session?.baseRatePerHr ?? 0,
-      multiplier: api.session?.multiplier ?? 1,
-      sessionMined: api.session?.sessionMined ?? 0,
-    },
-
-    // Optional: keep these around if your UI checks them
-    authed: !!api.authed,
-    ok: !!api.ok,
+  // --- user ---
+  base.user = {
+    ...(base.user ?? {}),
+    // Your UI expects totalMined (NOT totalMinedEcho)
+    totalMined: api.user?.totalMinedEcho ?? 0,
   };
 
-  return next as AppState;
+  // --- wallet ---
+  base.walletAddress = api.wallet?.address ?? null;
+  base.walletVerified = !!api.wallet?.verified;
+  base.walletVerifiedAt = api.wallet?.verifiedAt ?? null;
+  base.authed = !!api.authed;
+
+  // --- session ---
+  base.session = {
+    ...(base.session ?? {}),
+    isActive: !!api.session?.isActive,
+    baseRatePerHr: api.session?.baseRatePerHr ?? 0,
+    multiplier: api.session?.multiplier ?? 1,
+    // Your new server tracks this directly
+    sessionMined: api.session?.sessionMined ?? 0,
+
+    // Optional legacy fields some UIs use:
+    startTime: api.session?.startedAt ? new Date(api.session.startedAt).getTime() : null,
+    effectiveRate:
+      ((api.session?.baseRatePerHr ?? 0) * (api.session?.multiplier ?? 1)) / 3600, // per-sec if old code expects per-sec
+    baseRate: (api.session?.baseRatePerHr ?? 0) / 3600,
+  };
+
+  return base as AppState;
 }
 
 export const EchoAPI = {
-  STORAGE_KEY: "echo_miner_state_v2",
+  STORAGE_KEY: "echo_miner_state_v1",
 
+  loadLocal(): AppState | null {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem(this.STORAGE_KEY);
+      return raw ? (JSON.parse(raw) as AppState) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveLocal(state: AppState) {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore
+    }
+  },
+
+  // ---- STATE ----
   async getState(): Promise<AppState> {
-    const prev = safeLoad<AppState>(this.STORAGE_KEY);
+    const prev = this.loadLocal();
 
     const res = await fetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // server no longer needs client state; keep body minimal
-      body: JSON.stringify({}),
+      // Your new server doesn't need the old state, but sending it doesn't hurt.
+      body: JSON.stringify({ state: prev }),
       cache: "no-store",
-      credentials: "include",
     });
 
     const api = (await res.json()) as ApiState;
 
-    if (!api || typeof api !== "object" || typeof api.ok !== "boolean") {
+    // Basic guard so we don't crash the whole app
+    if (!api || typeof api !== "object" || typeof (api as any).ok !== "boolean") {
       throw new Error("Bad /api/state response");
     }
 
-    const next = toAppState(api, prev);
-    safeSave(this.STORAGE_KEY, next);
+    const next = apiToAppState(api, prev);
+    this.saveLocal(next);
     return next;
   },
 
+  // ---- MINING ----
   async refreshState(): Promise<AppState> {
-    // IMPORTANT: mining/refresh route uses cookie now; don’t send local state
+    // Your /api/mining/refresh route now uses cookie auth + DB; no need to send state.
     const res = await fetch("/api/mining/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
       cache: "no-store",
-      credentials: "include",
     });
 
-    const data = await res.json();
+    // If refresh errors (401 when not authed), fall back to state
+    if (!res.ok) return await this.getState();
 
-    // If refresh returns ApiState, map it. If it returns AppState, accept it.
-    if (data && typeof data === "object" && typeof data.ok === "boolean" && "wallet" in data) {
-      const prev = safeLoad<AppState>(this.STORAGE_KEY);
-      const next = toAppState(data as ApiState, prev);
-      safeSave(this.STORAGE_KEY, next);
-      return next;
-    }
+    const data = await res.json().catch(() => null);
 
-    safeSave(this.STORAGE_KEY, data);
-    return data as AppState;
+    // Most of your routes return “state-ish” objects; safest is: refetch canonical state.
+    return await this.getState();
   },
 
   async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
     const res = await fetch("/api/mining/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload ?? {}),
       cache: "no-store",
-      credentials: "include",
+      body: JSON.stringify({
+        baseRatePerHr: payload?.baseRatePerHr ?? 100, // pick a sane default
+        multiplier: payload?.multiplier ?? 1,
+      }),
     });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || data?.message || "Failed to start session");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || err?.message || "Failed to start session");
+    }
 
-    // after start, best practice: re-fetch truth from /api/state
     return await this.getState();
   },
 
+  // ---- BOOST ----
   async activateAdBoost(): Promise<AppState> {
     const res = await fetch("/api/boost/activate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
       cache: "no-store",
-      credentials: "include",
     });
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || data?.message || "Boost failed");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || err?.message || "Boost failed");
+    }
 
     return await this.getState();
   },
 
-  // You can update the other calls later the same way (stop sending {state})
+  // ---- PROFILE / NOTIFICATIONS (keep these so builds don’t break) ----
+  async updateNotificationPreferences(prefs: NotificationPreferences): Promise<AppState> {
+    const res = await fetch("/api/notifications/preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ prefs }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || err?.message || "Preferences update failed");
+    }
+
+    return await this.getState();
+  },
+
+  async handleNotifications(action: "read" | "readAll" | "clear", id?: string): Promise<AppState> {
+    const res = await fetch("/api/notifications", {
+      method: action === "clear" ? "DELETE" : "PATCH",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ id, all: action === "readAll" }),
+    });
+
+    if (!res.ok) return await this.getState();
+    return await this.getState();
+  },
+
+  // ---- SNAPSHOT (fixes your build error: EchoAPI.getSnapshotCSV missing) ----
+  async getSnapshotCSV(): Promise<string> {
+    const res = await fetch("/api/snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error || err?.message || "Snapshot export failed");
+    }
+
+    const data = (await res.json()) as { csv?: string };
+    return data.csv ?? "";
+  },
 };
