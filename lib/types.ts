@@ -1,17 +1,18 @@
+// lib/types.ts
 
 export enum Tab {
-  MINE = 'mine',
-  BOOST = 'boost',
-  STORE = 'store',
-  WALLET = 'wallet'
+  MINE = "mine",
+  BOOST = "boost",
+  STORE = "store",
+  WALLET = "wallet",
 }
 
-export type NotificationType = 
-  | 'session_end' 
-  | 'streak_grace_warning' 
-  | 'boost_expired' 
-  | 'weekly_summary' 
-  | 'airdrop_announcement';
+export type NotificationType =
+  | "session_end"
+  | "streak_grace_warning"
+  | "boost_expired"
+  | "weekly_summary"
+  | "airdrop_announcement";
 
 export interface AppNotification {
   id: string;
@@ -35,12 +36,16 @@ export interface UserStats {
   id: string;
   username: string;
   balance: number;
+
+  // IMPORTANT: your UI uses totalMined
   totalMined: number;
+
   referrals: number;
   joinedDate: number;
   guest: boolean;
   riskScore: number;
   referralCode: string;
+
   isAdmin?: boolean;
   priorityAirdrop?: boolean;
   pfpUrl?: string;
@@ -56,22 +61,34 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
+/**
+ * UI MiningSession (what your MineTab likely expects)
+ * Keep this stable to avoid rewriting the whole UI.
+ */
 export interface MiningSession {
   id: string;
   isActive: boolean;
+
   startTime: number | null;
   endTime: number | null;
+
   baseRate: number;
+
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
+
   effectiveRate: number;
-  status: 'active' | 'ended' | 'settled';
+
+  status: "active" | "ended" | "settled";
+
+  // Add this so you can display mined so far if you want
+  sessionMined?: number;
 }
 
 export interface ActiveBoost {
   id: string;
-  type: 'AD' | 'STORE';
+  type: "AD" | "STORE";
   multiplier: number;
   startAt: number;
   expiresAt: number;
@@ -82,7 +99,13 @@ export interface LedgerEntry {
   id: string;
   timestamp: number;
   deltaEcho: number;
-  reason: 'session_settlement' | 'referral_bonus' | 'admin_adjustment' | 'purchase_topup' | 'session_start' | 'boost_activation';
+  reason:
+    | "session_settlement"
+    | "referral_bonus"
+    | "admin_adjustment"
+    | "purchase_topup"
+    | "session_start"
+    | "boost_activation";
   sessionId?: string;
   hash: string;
 }
@@ -107,7 +130,42 @@ export interface AppState {
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
+
+  // Your existing wallet fields (UI legacy)
   walletAddress: string | null;
   walletVerifiedAt: number | null;
+
+  // Some older flows used nonce in the client
   currentNonce: string | null;
 }
+
+/* ------------------------------------------------------------------ */
+/* NEW: API response types (matches your DB-backed /api/state output)  */
+/* ------------------------------------------------------------------ */
+
+export type ApiWallet = {
+  address: string | null;
+  verified: boolean;
+  verifiedAt: string | null; // ISO
+};
+
+export type ApiUser = {
+  totalMinedEcho: number;
+};
+
+export type ApiMiningSession = {
+  isActive: boolean;
+  startedAt: string | null;      // ISO
+  lastAccruedAt: string | null;  // ISO
+  baseRatePerHr: number;
+  multiplier: number;
+  sessionMined: number;
+};
+
+export type ApiState = {
+  ok: boolean;
+  authed: boolean;
+  wallet: ApiWallet;
+  user: ApiUser;
+  session: ApiMiningSession;
+};
