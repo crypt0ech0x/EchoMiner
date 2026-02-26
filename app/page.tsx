@@ -1,151 +1,127 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Tab, AppState } from "@/lib/types";
+import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
 import MineTab from "@/components/MineTab";
 import BoostTab from "@/components/BoostTab";
 import StoreTab from "@/components/StoreTab";
 import WalletTab from "@/components/WalletTab";
 import ProfileDrawer from "@/components/ProfileDrawer";
-import { Tab } from "@/lib/types";
 
-// This is the REAL shape your /api/state returns (based on the JSON you pasted)
-type ApiState = {
-  ok: boolean;
-  authed: boolean;
-  wallet: {
-    address: string | null;
-    verified: boolean;
-    verifiedAt: string | null;
-  };
-  user: {
-    totalMinedEcho: number;
-  };
-  session: {
-    isActive: boolean;
-    startedAt: string | null;
-    lastAccruedAt: string | null;
-    baseRatePerHr: number;
-    multiplier: number;
-    sessionMined: number;
-  };
-};
+function getVerifiedWalletAddress(state: AppState | null): string | null {
+  if (!state) return null;
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    cache: "no-store",
-    headers: {
-      ...(init?.headers || {}),
-      "Content-Type": "application/json",
-    },
-  });
-  // This prevents the iPhone “string did not match expected pattern” crashes when HTML is returned
-  const text = await res.text();
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`Bad JSON from ${url}: ${text.slice(0, 120)}...`);
+  // Prefer the new server shape: state.wallet.{address, verified}
+  const w = (state as any).wallet;
+  if (w && typeof w === "object") {
+    const addr = typeof w.address === "string" ? w.address : null;
+    const verified = Boolean(w.verified);
+    return verified && addr ? addr : null;
   }
-  return data as T;
+
+  // Fallback to older shape if your AppState still has walletAddress
+  const legacy = (state as any).walletAddress;
+  return typeof legacy === "string" && legacy.length ? legacy : null;
+}
+
+function getTotalMined(state: AppState | null): number {
+  if (!state) return 0;
+
+  // Your TS errors show UserStats has totalMined (not totalMinedEcho)
+  const user = (state as any).user;
+  const v = user?.totalMined;
+  return Number.isFinite(v) ? Number(v) : 0;
 }
 
 export default function EchoMinerApp() {
-  const [apiState, setApiState] = useState<ApiState | null>(null);
+  const [state, setState] = useState<AppState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
-
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
-  const loadState = useCallback(async () => {
+  const mountedRef = useRef(true);
+
+  async function loadInitialState() {
     setLoadError(null);
     try {
-      const s = await fetchJson<ApiState>("/api/state");
-      if (!s || typeof s.ok !== "boolean") throw new Error("Bad /api/state shape");
-      setApiState(s);
+      const s = await EchoAPI.getState(); // should already return AppState
+      if (!mountedRef.current) return;
+      setState(s);
     } catch (e: any) {
+      if (!mountedRef.current) return;
       setLoadError(e?.message || "Failed to load state");
-    } finally {
-      setIsLoading(false);
     }
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    loadInitialState();
+    return () => {
+      mountedRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // initial load
+  // Refresh loop (don’t spam if state is null)
   useEffect(() => {
-    loadState();
-  }, [loadState]);
+    if (!state) return;
 
-  // poll state (slower + safer than every 1s)
-  useEffect(() => {
-    const id = setInterval(() => {
-      loadState();
-    }, 2500);
-    return () => clearInterval(id);
-  }, [loadState]);
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        // Optional: only refresh if mining is active (reduces load)
+        const isActive = Boolean((state as any)?.session?.isActive);
 
-  // When wallet verifies, we want the parent to refetch server truth
-  const handleWalletVerified = useCallback(() => {
-    loadState();
-  }, [loadState]);
+        // If you want ALWAYS refresh, remove this if-block.
+        if (!isActive) return;
 
-  // ---- Derive the props your existing components expect, without fighting TS types ----
-  // We intentionally cast to "any" at the boundary because your UI components were built for AppState.
-  const legacyStateForUI = useMemo(() => {
-    if (!apiState) return null;
+        const updated = await EchoAPI.refreshState();
+        if (cancelled || !mountedRef.current) return;
+        setState(updated);
+        setRefreshError(null);
+      } catch (e: any) {
+        if (cancelled || !mountedRef.current) return;
+        // Don’t crash UI on iPhone—just show a small retry hint
+        setRefreshError(e?.message || "Refresh failed");
+      }
+    }, 1500);
 
-    // Provide the minimum fields your UI likely uses.
-    // Anything extra is fine; missing fields would crash, so we default them.
-    const s: any = {
-      // wallet
-      walletAddress: apiState.wallet.address,
-      walletVerified: apiState.wallet.verified,
-      wallet: apiState.wallet,
-
-      // user
-      user: {
-        totalMined: apiState.user.totalMinedEcho ?? 0,
-      },
-
-      // session (some components might expect different names; provide safe defaults)
-      session: {
-        isActive: apiState.session.isActive,
-        sessionMined: apiState.session.sessionMined ?? 0,
-        baseRate: apiState.session.baseRatePerHr ?? 0,
-        effectiveRate: (apiState.session.baseRatePerHr ?? 0) * (apiState.session.multiplier ?? 1),
-        startTime: apiState.session.startedAt ? new Date(apiState.session.startedAt).getTime() : 0,
-      },
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
     };
+  }, [state]);
 
-    return s;
-  }, [apiState]);
-
-  // compute session earnings safely (works even if MineTab expects earnings)
+  // Session earnings: don’t rely on strict fields; use “maybe” fields safely.
   const sessionEarnings = useMemo(() => {
-    if (!apiState?.session?.isActive) return 0;
-    return apiState.session.sessionMined ?? 0;
-  }, [apiState]);
+    if (!state) return 0;
+    const s: any = (state as any).session;
 
-  // ---- UI states ----
-  if (isLoading && !apiState) {
-    return (
-      <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">
-        Initializing Voyager Node...
-      </div>
-    );
-  }
+    // If your state now stores mined in sessionMined, use it:
+    if (typeof s?.sessionMined === "number") return s.sessionMined;
+
+    // Legacy client-calc fallback:
+    if (!s?.isActive) return 0;
+    const start = typeof s?.startTime === "number" ? s.startTime : null;
+    const rate = typeof s?.effectiveRate === "number" ? s.effectiveRate : null;
+    if (start == null || rate == null) return 0;
+
+    const elapsedSec = (Date.now() - start) / 1000;
+    return Math.max(0, elapsedSec * rate);
+  }, [state]);
 
   if (loadError) {
     return (
       <div className="h-screen bg-background flex flex-col items-center justify-center text-center px-6">
-        <div className="text-white font-black text-xl mb-3">Couldn’t load the app</div>
-        <div className="text-white/60 text-sm mb-6 break-words max-w-[520px]">{loadError}</div>
+        <div className="font-black tracking-widest text-white/60 mb-2">Couldn’t load</div>
+        <div className="text-xs text-white/40 mb-6 break-words">{loadError}</div>
         <button
-          onClick={loadState}
-          className="px-5 py-3 rounded-xl bg-white/10 border border-white/10 text-white font-bold"
+          onClick={loadInitialState}
+          className="px-5 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold"
         >
           Retry
         </button>
@@ -153,9 +129,16 @@ export default function EchoMinerApp() {
     );
   }
 
-  // If not authed: still render the layout + Wallet tab so user can verify and get a session cookie.
-  // (Your /api/state returned authed:false, which is why you were stuck before.)
-  const authed = apiState?.authed === true;
+  if (!state) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">
+        Initializing Voyager Node...
+      </div>
+    );
+  }
+
+  const totalMined = getTotalMined(state);
+  const verifiedWalletAddress = getVerifiedWalletAddress(state);
 
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
@@ -164,65 +147,45 @@ export default function EchoMinerApp() {
 
       <Layout
         activeTab={activeTab}
-        setActiveTab={setActiveTab as any}
+        setActiveTab={setActiveTab}
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
-        state={(legacyStateForUI ?? {}) as any}
+        state={state}
       >
-        {!authed ? (
-          <div className="px-6 pt-6 space-y-6">
-            <div className="glass rounded-2xl p-5 border border-white/10">
-              <div className="text-white font-black text-lg">Almost there</div>
-              <div className="text-white/60 text-sm mt-1">
-                You’re not logged in yet. Verify your wallet to create a session cookie, then the mining tabs will unlock.
-              </div>
-              <div className="text-white/40 text-xs mt-3">
-                (Your server returned <span className="font-mono">authed: false</span> from <span className="font-mono">/api/state</span>)
-              </div>
-            </div>
-
-            <WalletTab
-              totalMinedEcho={apiState?.user?.totalMinedEcho ?? 0}
-              verifiedWalletAddress={apiState?.wallet?.verified ? apiState.wallet.address : null}
-              // If you add this prop in WalletTab, call it after verify success:
-              // onVerified={handleWalletVerified}
-              // For now, we still refetch every 2.5s so it will update anyway.
-            />
+        {refreshError && (
+          <div className="mx-6 mb-4 p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-200 text-xs font-bold">
+            {refreshError} (will keep trying)
           </div>
-        ) : (
-          <>
-            {activeTab === Tab.MINE && (
-              <MineTab
-                state={legacyStateForUI as any}
-                sessionEarnings={sessionEarnings as any}
-                onStartSession={async () => {
-                  await fetchJson("/api/mining/start", { method: "POST", body: JSON.stringify({ baseRatePerHr: 1 }) });
-                  await loadState();
-                }}
-                totalMultiplier={
-                  apiState?.session?.isActive ? apiState.session.multiplier ?? 1 : 1
-                }
-                effectiveRate={(apiState.session.baseRatePerHr ?? 0) * (apiState.session.multiplier ?? 1)}
-                currentTime={Date.now()}
-                onOpenBoosts={() => setActiveTab(Tab.BOOST)}
-              />
-            )}
+        )}
 
-            {activeTab === Tab.BOOST && (
-              <BoostTab state={legacyStateForUI as any} onApplyAdBoost={loadState as any} currentTime={Date.now()} />
-            )}
+        {activeTab === Tab.MINE && (
+          <MineTab
+            state={state}
+            sessionEarnings={sessionEarnings}
+            onStartSession={async () => setState(await EchoAPI.startSession())}
+            totalMultiplier={
+              (state as any)?.session?.isActive
+                ? (((state as any).session.effectiveRate ?? 0) / ((state as any).session.baseRate ?? 1) || 1)
+                : 1
+            }
+            effectiveRate={(state as any)?.session?.effectiveRate ?? 0}
+            currentTime={Date.now()}
+            onOpenBoosts={() => setActiveTab(Tab.BOOST)}
+          />
+        )}
 
-            {activeTab === Tab.STORE && <StoreTab state={legacyStateForUI as any} onPurchase={loadState as any} />}
+        {activeTab === Tab.BOOST && (
+          <BoostTab
+            state={state}
+            onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())}
+            currentTime={Date.now()}
+          />
+        )}
 
-            {activeTab === Tab.WALLET && (
-              <WalletTab
-                totalMinedEcho={apiState?.user?.totalMinedEcho ?? 0}
-                verifiedWalletAddress={apiState?.wallet?.verified ? apiState.wallet.address : null}
-                // If you add onVerified to WalletTab, uncomment:
-                // onVerified={handleWalletVerified}
-              />
-            )}
-          </>
+        {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
+
+        {activeTab === Tab.WALLET && (
+          <WalletTab totalMinedEcho={totalMined} verifiedWalletAddress={verifiedWalletAddress} />
         )}
       </Layout>
 
@@ -232,9 +195,9 @@ export default function EchoMinerApp() {
           setIsProfileOpen(false);
           setIsNotificationsOpen(false);
         }}
-        state={(legacyStateForUI ?? {}) as any}
-        onUpdateUser={() => loadState()}
-        initialView={isNotificationsOpen ? ("notifications" as any) : ("main" as any)}
+        state={state}
+        onUpdateUser={setState}
+        initialView={isNotificationsOpen ? "notifications" : "main"}
       />
     </div>
   );
