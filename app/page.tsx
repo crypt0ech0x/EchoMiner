@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tab } from "@/lib/types";
+import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
 import MineTab from "@/components/MineTab";
 import BoostTab from "@/components/BoostTab";
@@ -9,8 +10,7 @@ import StoreTab from "@/components/StoreTab";
 import WalletTab from "@/components/WalletTab";
 import ProfileDrawer from "@/components/ProfileDrawer";
 
-// Minimal shape based on what your /api/state returns.
-// (Keeps you independent of EchoAPI URL/env weirdness.)
+// This matches the JSON you showed from /api/state
 type ApiState = {
   ok: boolean;
   authed: boolean;
@@ -24,151 +24,134 @@ type ApiState = {
   };
   session: {
     isActive: boolean;
-    startedAt: string | null;
-    lastAccruedAt: string | null;
+    startedAt: string | null; // ISO
+    lastAccruedAt: string | null; // ISO
     baseRatePerHr: number;
     multiplier: number;
     sessionMined: number;
   };
 };
 
-async function fetchState(): Promise<ApiState> {
-  const res = await fetch("/api/state", {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`State fetch failed (${res.status})`);
-  return (await res.json()) as ApiState;
-}
-
-async function postRefresh(): Promise<ApiState> {
-  const res = await fetch("/api/mining/refresh", {
-    method: "POST",
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    // If user isn’t authed, or wallet not verified, don’t hard-crash the UI.
-    // Just fall back to GET /api/state.
-    return await fetchState();
-  }
-  // Your refresh route likely returns mining fields; but easiest is:
-  // after refresh, read canonical state.
-  return await fetchState();
-}
-
 export default function EchoMinerApp() {
   const [state, setState] = useState<ApiState | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
+
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Keep a live ref so intervals don’t close over stale state
-  const stateRef = useRef<ApiState | null>(null);
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+  // Prevent overlapping refresh calls
+  const refreshingRef = useRef(false);
 
-  // 1) Initial load (with retry)
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadWithRetry() {
-      setLoadError(null);
-
-      const delays = [0, 500, 1500, 3000]; // quick retries
-      for (const d of delays) {
-        if (cancelled) return;
-        if (d) await new Promise((r) => setTimeout(r, d));
-
-        try {
-          const s = await fetchState();
-          if (cancelled) return;
-          setState(s);
-          return;
-        } catch (e: any) {
-          if (cancelled) return;
-          setLoadError(e?.message || "Failed to load state");
-        }
+  async function loadStateOnce() {
+    setLoadError(null);
+    try {
+      const s = (await EchoAPI.getState()) as ApiState;
+      // Basic sanity check so we don't crash on unexpected shapes
+      if (!s || typeof s !== "object" || typeof (s as any).ok !== "boolean") {
+        throw new Error("Bad state response from server");
       }
+      setState(s);
+    } catch (e: any) {
+      setLoadError(e?.message || "Failed to load state");
+      setState(null);
+    } finally {
+      setIsLoading(false);
     }
+  }
 
-    loadWithRetry();
-    return () => {
-      cancelled = true;
-    };
+  // Initial load
+  useEffect(() => {
+    loadStateOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2) Tick clock for UI
+  // Tick clock
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // 3) Refresh/poll:
-  // - If mining is active, refresh every 1s
-  // - If not active, refresh every 10s (keeps wallet/session status current)
+  // Refresh from server once per second (safe)
   useEffect(() => {
-    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (refreshingRef.current) return;
+      refreshingRef.current = true;
 
-    async function loop() {
-      while (!cancelled) {
-        const s = stateRef.current;
-        const active = Boolean(s?.session?.isActive);
-
-        // Wait
-        const delay = active ? 1000 : 10000;
-        await new Promise((r) => setTimeout(r, delay));
-        if (cancelled) return;
-
-        try {
-          const updated = active ? await postRefresh() : await fetchState();
-          if (cancelled) return;
+      try {
+        const updated = (await EchoAPI.refreshState()) as ApiState;
+        if (updated && typeof updated.ok === "boolean") {
           setState(updated);
-          setLoadError(null);
-        } catch (e: any) {
-          if (cancelled) return;
-          setLoadError(e?.message || "Refresh failed");
         }
+      } catch {
+        // Don’t hard-crash the UI if refresh fails intermittently.
+        // We keep the last good state.
+      } finally {
+        refreshingRef.current = false;
       }
-    }
+    }, 1000);
 
-    loop();
-    return () => {
-      cancelled = true;
-    };
+    return () => clearInterval(interval);
   }, []);
 
-  // If your MineTab still expects “session earnings”, just use server truth:
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
-    return Number(state.session.sessionMined || 0);
-  }, [state]);
+    if (!state.session.startedAt) return 0;
 
-  // Simple derived numbers (safe even if components don’t use them)
-  const totalMultiplier = useMemo(() => {
-    if (!state?.session) return 1;
-    return Number(state.session.multiplier || 1);
-  }, [state]);
+    const startedMs = Date.parse(state.session.startedAt);
+    if (!Number.isFinite(startedMs)) return 0;
 
-  const effectiveRatePerSec = useMemo(() => {
-    if (!state?.session) return 0;
-    const perHr = Number(state.session.baseRatePerHr || 0) * Number(state.session.multiplier || 1);
-    return perHr / 3600;
-  }, [state]);
+    // 3 hour session cap (same as your backend)
+    const SESSION_SECONDS = 60 * 60 * 3;
 
+    const elapsedSec = Math.max(0, Math.floor((currentTime - startedMs) / 1000));
+    const cappedSec = Math.min(elapsedSec, SESSION_SECONDS);
+
+    const ratePerSec = ((state.session.baseRatePerHr || 0) * (state.session.multiplier || 1)) / 3600;
+    const earned = cappedSec * ratePerSec;
+
+    return earned;
+  }, [state, currentTime]);
+
+  if (isLoading) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">
+        Initializing Voyager Node...
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center px-8">
+        <div className="max-w-md w-full glass rounded-2xl p-6 border border-white/10 text-center space-y-4">
+          <div className="text-white font-black text-lg">Couldn’t load the app</div>
+          <div className="text-xs text-slate-400 break-words">{loadError}</div>
+          <button
+            onClick={() => {
+              setIsLoading(true);
+              loadStateOnce();
+            }}
+            className="w-full h-12 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white font-black uppercase tracking-widest text-xs"
+          >
+            Retry
+          </button>
+          <div className="text-[11px] text-slate-500">
+            Tip (iPhone): open this in Safari, then pull-to-refresh once.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // At this point state should exist, but keep it defensive anyway:
   if (!state) {
     return (
-      <div className="h-screen bg-background flex flex-col items-center justify-center gap-3 font-black tracking-widest text-white/20 animate-pulse">
-        <div>Initializing Voyager Node...</div>
-        {loadError ? (
-          <div className="text-xs font-bold tracking-normal text-red-400/80 animate-none">
-            {loadError} — retrying…
-          </div>
-        ) : null}
+      <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20">
+        Initializing Voyager Node...
       </div>
     );
   }
@@ -183,30 +166,16 @@ export default function EchoMinerApp() {
         setActiveTab={setActiveTab}
         onOpenProfile={() => setIsProfileOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}
-        // If Layout expects your old AppState type, keep passing what it needs.
-        // Most layouts only read user/session/wallet-ish fields anyway.
+        // Layout expects "state" — if its type is stricter, you may need to update AppState in lib/types too.
         state={state as any}
       >
         {activeTab === Tab.MINE && (
           <MineTab
             state={state as any}
             sessionEarnings={sessionEarnings}
-            onStartSession={async () => {
-              // If your MineTab start button calls an API internally, you can ignore this.
-              // Otherwise, you likely have /api/mining/start — after calling it, re-fetch state:
-              await fetch("/api/mining/start", {
-                method: "POST",
-                credentials: "include",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  baseRatePerHr: state.session.baseRatePerHr || 1,
-                  multiplier: state.session.multiplier || 1,
-                }),
-              }).catch(() => null);
-              setState(await fetchState());
-            }}
-            totalMultiplier={totalMultiplier}
-            effectiveRate={effectiveRatePerSec}
+            onStartSession={async () => setState((await EchoAPI.startSession()) as any)}
+            totalMultiplier={state.session.isActive ? state.session.multiplier : 1}
+            effectiveRate={(state.session.baseRatePerHr * state.session.multiplier) / 3600}
             currentTime={currentTime}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
           />
@@ -215,28 +184,19 @@ export default function EchoMinerApp() {
         {activeTab === Tab.BOOST && (
           <BoostTab
             state={state as any}
-            onApplyAdBoost={async () => {
-              await fetch("/api/boost/activate", { method: "POST", credentials: "include" }).catch(() => null);
-              setState(await fetchState());
-            }}
+            onApplyAdBoost={async () => setState((await EchoAPI.activateAdBoost()) as any)}
             currentTime={currentTime}
           />
         )}
 
-        {activeTab === Tab.STORE && <StoreTab state={state as any} onPurchase={() => fetchState().then(setState)} />}
+        {activeTab === Tab.STORE && <StoreTab state={state as any} onPurchase={setState as any} />}
 
         {activeTab === Tab.WALLET && (
           <WalletTab
-            totalMinedEcho={state.user.totalMinedEcho}
-            verifiedWalletAddress={state.wallet.verified ? state.wallet.address : null}
+            totalMinedEcho={state.user?.totalMinedEcho ?? 0}
+            verifiedWalletAddress={state.wallet?.verified ? state.wallet.address : null}
           />
         )}
-
-        {loadError ? (
-          <div className="mt-3 text-center text-xs font-bold text-red-400/80">
-            {loadError}
-          </div>
-        ) : null}
       </Layout>
 
       <ProfileDrawer
@@ -246,7 +206,7 @@ export default function EchoMinerApp() {
           setIsNotificationsOpen(false);
         }}
         state={state as any}
-        onUpdateUser={() => fetchState().then(setState)}
+        onUpdateUser={setState as any}
         initialView={isNotificationsOpen ? "notifications" : "main"}
       />
     </div>
