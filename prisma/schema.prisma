@@ -1,6 +1,4 @@
-// ==============================
-// DATABASE CONNECTION
-// ==============================
+// prisma/schema.prisma
 
 datasource db {
   provider = "postgresql"
@@ -10,10 +8,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// ==============================
-// USER
-// ==============================
-
 model User {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -21,7 +15,6 @@ model User {
 
   email String? @unique
 
-  // Total mined across all sessions (server truth)
   totalMinedEcho Float @default(0)
 
   wallet        Wallet?
@@ -31,10 +24,6 @@ model User {
 
   @@index([totalMinedEcho])
 }
-
-// ==============================
-// WALLET (1 per user)
-// ==============================
 
 model Wallet {
   id        String   @id @default(cuid())
@@ -49,10 +38,6 @@ model Wallet {
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
-// ==============================
-// WALLET NONCE (for signature challenge)
-// ==============================
-
 model WalletNonce {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -63,10 +48,6 @@ model WalletNonce {
   @@index([walletAddress])
   @@index([nonce])
 }
-
-// ==============================
-// ACTIVE MINING SESSION (1 per user)
-// ==============================
 
 model MiningSession {
   id        String   @id @default(cuid())
@@ -88,10 +69,6 @@ model MiningSession {
 
   @@index([isActive])
 }
-
-// ==============================
-// MINING HISTORY (AUDIT LOG)
-// ==============================
 
 model MiningHistory {
   id        String   @id @default(cuid())
@@ -115,10 +92,10 @@ model Session {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
   expiresAt DateTime
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // Helps invalidate sessions quickly if needed
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   revokedAt DateTime?
 
   @@index([userId])
