@@ -2,27 +2,22 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromSessionCookie } from "@/lib/auth";
 
-export async function GET() {
+export const runtime = "nodejs"; // important for Prisma on Vercel
+
+export async function POST() {
   try {
     const user = await getUserFromSessionCookie();
 
-    // Not logged in yet → return a safe default shape
     if (!user) {
       return NextResponse.json({
         ok: true,
         authed: false,
-        wallet: {
-          address: null as string | null,
-          verified: false,
-          verifiedAt: null as string | null,
-        },
-        user: {
-          totalMinedEcho: 0,
-        },
+        wallet: { address: null, verified: false, verifiedAt: null },
+        user: { totalMinedEcho: 0 },
         session: {
           isActive: false,
-          startedAt: null as string | null,
-          lastAccruedAt: null as string | null,
+          startedAt: null,
+          lastAccruedAt: null,
           baseRatePerHr: 0,
           multiplier: 1,
           sessionMined: 0,
@@ -30,53 +25,35 @@ export async function GET() {
       });
     }
 
-    // Pull fresh truth from DB
-    const [dbUser, wallet, miningSession] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: user.id },
-        select: { id: true, totalMinedEcho: true, email: true },
-      }),
-      prisma.wallet.findFirst({
-        where: { userId: user.id },
-        select: { address: true, verified: true, verifiedAt: true },
-      }),
-      prisma.miningSession.findUnique({
-        where: { userId: user.id },
-        select: {
-          isActive: true,
-          startedAt: true,
-          lastAccruedAt: true,
-          baseRatePerHr: true,
-          multiplier: true,
-          sessionMined: true,
-        },
-      }),
-    ]);
+    const session = await prisma.miningSession.findUnique({ where: { userId: user.id } });
 
     return NextResponse.json({
       ok: true,
       authed: true,
-      user: {
-        id: dbUser?.id ?? user.id,
-        email: dbUser?.email ?? null,
-        totalMinedEcho: dbUser?.totalMinedEcho ?? 0,
-      },
       wallet: {
-        address: wallet?.address ?? null,
-        verified: wallet?.verified ?? false,
-        verifiedAt: wallet?.verifiedAt ? wallet.verifiedAt.toISOString() : null,
+        address: user.wallet?.address ?? null,
+        verified: user.wallet?.verified ?? false,
+        verifiedAt: user.wallet?.verifiedAt ? user.wallet.verifiedAt.toISOString() : null,
+      },
+      user: {
+        totalMinedEcho: user.totalMinedEcho ?? 0,
       },
       session: {
-        isActive: miningSession?.isActive ?? false,
-        startedAt: miningSession?.startedAt ? miningSession.startedAt.toISOString() : null,
-        lastAccruedAt: miningSession?.lastAccruedAt ? miningSession.lastAccruedAt.toISOString() : null,
-        baseRatePerHr: miningSession?.baseRatePerHr ?? 0,
-        multiplier: miningSession?.multiplier ?? 1,
-        sessionMined: miningSession?.sessionMined ?? 0,
+        isActive: session?.isActive ?? false,
+        startedAt: session?.startedAt ? session.startedAt.toISOString() : null,
+        lastAccruedAt: session?.lastAccruedAt ? session.lastAccruedAt.toISOString() : null,
+        baseRatePerHr: session?.baseRatePerHr ?? 0,
+        multiplier: session?.multiplier ?? 1,
+        sessionMined: session?.sessionMined ?? 0,
       },
     });
-  } catch (err) {
-    console.error("state GET error:", err);
-    return NextResponse.json({ ok: false, error: "State fetch failed" }, { status: 500 });
+  } catch (e) {
+    console.error("api/state error:", e);
+    return NextResponse.json({ ok: false, error: "State failed" }, { status: 500 });
   }
+}
+
+// Optional but helpful: lets you visit /api/state in a browser without 405
+export async function GET() {
+  return POST();
 }
