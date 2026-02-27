@@ -144,12 +144,6 @@ export default function EchoMinerApp() {
     onVerified={async () => setState(await EchoAPI.getState())}
   />
 )}
-             onVerified={async () => {
-               const fresh = await EchoAPI.getState();
-               setState(fresh);
-             }}
-           />
-        )}
       </Layout>
 
       <ProfileDrawer
