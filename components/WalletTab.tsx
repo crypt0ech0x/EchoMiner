@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
@@ -15,31 +15,21 @@ import {
   Wallet as WalletIcon,
 } from "lucide-react";
 
-type Props = {
-  totalMinedEcho?: number;
-
-  /**
-   * Server truth:
-   * - null => not verified (or no wallet on file)
-   * - string => verified wallet address stored in DB for this user/session
-   */
-  verifiedWalletAddress?: string | null;
-
-  /**
-   * Optional but strongly recommended:
-   * Parent should refetch /api/state after verification
-   * so the whole app state updates from the DB.
-   */
-  onVerified?: () => void;
+type WalletServerState = {
+  address: string | null;
+  verified: boolean;
+  verifiedAt: string | null;
 };
 
-function verifiedKey(address: string) {
-  return `echo:walletVerified:${address}`;
-}
+type Props = {
+  totalMinedEcho?: number;
+  walletFromServer?: WalletServerState;
+  onVerified?: () => void | Promise<void>;
+};
 
 export default function WalletTab({
   totalMinedEcho = 0,
-  verifiedWalletAddress = null,
+  walletFromServer,
   onVerified,
 }: Props) {
   const { connection } = useConnection();
@@ -51,32 +41,14 @@ export default function WalletTab({
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
-  /**
-   * Verified rule:
-   * - If server gave us a verified wallet address, we trust it (production truth).
-   * - Otherwise we can *optionally* use localStorage as a temporary UX helper.
-   */
-  const isVerified = useMemo(() => {
-    if (!address) return false;
-    if (verifiedWalletAddress && verifiedWalletAddress === address) return true;
+  // Server truth: verified only if server says verified AND it matches the connected wallet address
+  const serverVerifiedForThisWallet = useMemo(() => {
+    if (!connected || !address) return false;
+    if (!walletFromServer?.verified) return false;
+    if (!walletFromServer?.address) return false;
+    return walletFromServer.address === address;
+  }, [connected, address, walletFromServer]);
 
-    // Optional fallback: local cache (helps UX if parent hasn't refetched yet)
-    try {
-      return localStorage.getItem(verifiedKey(address)) === "1";
-    } catch {
-      return false;
-    }
-  }, [address, verifiedWalletAddress]);
-
-  // Clear balance + errors when disconnecting
-  useEffect(() => {
-    if (!connected) {
-      setSolBalance(null);
-      setError(null);
-    }
-  }, [connected]);
-
-  // Load SOL balance
   useEffect(() => {
     let cancelled = false;
 
@@ -85,12 +57,8 @@ export default function WalletTab({
         setSolBalance(null);
         return;
       }
-      try {
-        const lamports = await connection.getBalance(publicKey, { commitment: "confirmed" });
-        if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
-      } catch {
-        if (!cancelled) setSolBalance(null);
-      }
+      const lamports = await connection.getBalance(publicKey, { commitment: "confirmed" });
+      if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
     }
 
     loadBalance();
@@ -131,33 +99,28 @@ export default function WalletTab({
     try {
       setIsVerifying(true);
 
-      // 1) Get nonce challenge (bound to this wallet address)
+      // Challenge (nonce)
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-        credentials: "include",
       });
-
       if (!challengeRes.ok) throw new Error("Could not start verification. Try again.");
       const { nonce } = (await challengeRes.json()) as { nonce: string };
 
-      // 2) Create message (plain ASCII only: no fancy bullets/dashes)
       const message =
-        "ECHO Wallet Verification\n" +
+        `ECHO Wallet Verification\n` +
         `Wallet: ${publicKey.toBase58()}\n` +
         `Nonce: ${nonce}\n` +
-        "\nBy signing this message, you verify ownership for ECHO airdrop eligibility.";
+        `\nBy signing this message, you verify ownership for ECHO airdrop eligibility.`;
 
-      // 3) Sign message
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
 
-      // 4) Verify server-side + set session cookie / bind wallet in DB
+      // Verify + bind on server (should also issue session cookie)
       const verifyRes = await fetch("/api/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           publicKey: publicKey.toBase58(),
           nonce,
@@ -171,15 +134,8 @@ export default function WalletTab({
         throw new Error(data?.error || "Verification failed.");
       }
 
-      // UX helper: cache locally so tab-switch doesn't flicker
-      try {
-        localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {
-        // ignore
-      }
-
-      // IMPORTANT: tell parent to refetch /api/state so server truth updates app-wide
-      onVerified?.();
+      // IMPORTANT: tell parent to refetch /api/state so UI stays verified across tab switches
+      await onVerified?.();
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
     } finally {
@@ -218,12 +174,12 @@ export default function WalletTab({
                   <h3 className="font-black text-white text-lg">Wallet Connected</h3>
                   <span
                     className={`text-[10px] font-black px-2 py-0.5 rounded uppercase border ${
-                      isVerified
+                      serverVerifiedForThisWallet
                         ? "bg-teal-400/20 text-teal-400 border-teal-400/20"
                         : "bg-white/10 text-white/60 border-white/10"
                     }`}
                   >
-                    {isVerified ? "Verified" : "Unverified"}
+                    {serverVerifiedForThisWallet ? "Verified" : "Unverified"}
                   </span>
                 </div>
 
@@ -240,10 +196,8 @@ export default function WalletTab({
                   </button>
                 </div>
 
-                {/* NOTE: no special bullets, no weird encoding */}
                 <div className="mt-2 text-[11px] text-white/50">
-                  Wallet:{" "}
-                  <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
+                  Wallet: <span className="text-white/70">{wallet?.adapter?.name ?? "Wallet"}</span>{" "}
                   <span className="text-white/50">|</span>{" "}
                   SOL:{" "}
                   <span className="text-white/70">
@@ -253,35 +207,17 @@ export default function WalletTab({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white/5 p-5 rounded-2xl border border-white/5">
-                <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">
-                  Snapshot Alloc
-                </p>
-                <p className="text-2xl font-black text-white tabular-nums">
-                  {Number(totalMinedEcho).toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-white/5 p-5 rounded-2xl border border-white/5">
-                <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">
-                  Airdrop Readiness
-                </p>
-                <p className={`text-2xl font-black ${isVerified ? "text-teal-400" : "text-white/50"}`}>
-                  {isVerified ? "100%" : "-"}
-                </p>
-              </div>
-            </div>
+            {/* If server says verified, we don't ask again */}
+            {!serverVerifiedForThisWallet ? (
+              <div className="space-y-3">
+                <button
+                  onClick={() => window.open(explorerUrl(address), "_blank", "noopener,noreferrer")}
+                  className="w-full h-14 glass rounded-2xl text-xs font-bold text-slate-400 border border-white/10 flex items-center justify-center gap-2 hover:bg-white/5 transition-all"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  View On Solscan
+                </button>
 
-            <div className="space-y-3">
-              <button
-                onClick={() => window.open(explorerUrl(address), "_blank", "noopener,noreferrer")}
-                className="w-full h-14 glass rounded-2xl text-xs font-bold text-slate-400 border border-white/10 flex items-center justify-center gap-2 hover:bg-white/5 transition-all"
-              >
-                <ExternalLink className="w-4 h-4" />
-                View On Solscan
-              </button>
-
-              {!isVerified ? (
                 <button
                   onClick={handleVerifyWallet}
                   disabled={isVerifying}
@@ -307,27 +243,49 @@ export default function WalletTab({
                     </>
                   )}
                 </button>
-              ) : (
+
+                {error && (
+                  <div className="w-full p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-bold">
+                    {error}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <button
+                  onClick={() => window.open(explorerUrl(address), "_blank", "noopener,noreferrer")}
+                  className="w-full h-14 glass rounded-2xl text-xs font-bold text-slate-400 border border-white/10 flex items-center justify-center gap-2 hover:bg-white/5 transition-all"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  View On Solscan
+                </button>
+
                 <button
                   disabled
                   className="w-full h-16 bg-teal-500/10 border border-teal-500/20 rounded-[24px] text-xs font-black text-teal-300 uppercase tracking-widest cursor-not-allowed"
                 >
                   Wallet Verified
                 </button>
-              )}
+              </div>
+            )}
 
-              <button
-                disabled
-                className="w-full h-14 bg-white/5 border border-white/5 rounded-2xl text-xs font-black text-slate-600 uppercase tracking-widest cursor-not-allowed"
-              >
-                Claims Launching Phase 3
-              </button>
-
-              {error && (
-                <div className="w-full p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-bold">
-                  {error}
-                </div>
-              )}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white/5 p-5 rounded-2xl border border-white/5">
+                <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">
+                  Snapshot Alloc
+                </p>
+                <p className="text-2xl font-black text-white tabular-nums">
+                  {Number(totalMinedEcho).toFixed(2)}
+                </p>
+              </div>
+              <div className="bg-white/5 p-5 rounded-2xl border border-white/5">
+                <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mb-1">
+                  Airdrop Readiness
+                </p>
+                <p className={`text-2xl font-black ${serverVerifiedForThisWallet ? "text-teal-400" : "text-white/50"}`}>
+                  {serverVerifiedForThisWallet ? "100%" : "-"}
+                </p>
+              </div>
             </div>
           </div>
         ) : (
@@ -339,7 +297,7 @@ export default function WalletTab({
             <h3 className="text-2xl font-black text-white mb-3 tracking-tight">Connect & Verify</h3>
             <p className="text-sm text-slate-500 mb-10 max-w-[280px] leading-relaxed">
               We use <span className="text-white font-bold">cryptographic signatures</span> to link
-              your account. Mined ECHO is stored off-chain until the TGE snapshot.
+              your account.
             </p>
 
             <div className="w-full">
@@ -357,8 +315,7 @@ export default function WalletTab({
           </h4>
           <p className="text-xs text-slate-500 leading-relaxed font-medium">
             Your mined balance is a <span className="text-white">virtual accrual</span>. It will be
-            snapshotted exactly 24h before token launch. Duplicate accounts or bot behavior will
-            void eligibility.
+            snapshotted exactly 24h before token launch.
           </p>
         </div>
       </div>
@@ -371,32 +328,16 @@ export default function WalletTab({
         <div className="space-y-3">
           <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <ShieldCheck className={`w-5 h-5 ${isVerified ? "text-teal-400" : "text-slate-600"}`} />
-              <span className={`text-xs font-bold ${isVerified ? "text-white" : "text-slate-600"}`}>
+              <ShieldCheck className={`w-5 h-5 ${serverVerifiedForThisWallet ? "text-teal-400" : "text-slate-600"}`} />
+              <span className={`text-xs font-bold ${serverVerifiedForThisWallet ? "text-white" : "text-slate-600"}`}>
                 Wallet Verified
               </span>
             </div>
-            {isVerified ? (
+            {serverVerifiedForThisWallet ? (
               <CheckCircle2 className="w-4 h-4 text-teal-400" />
             ) : (
               <div className="w-4 h-4 rounded-full border border-slate-700" />
             )}
-          </div>
-
-          <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="text-teal-400 w-5 h-5" />
-              <span className="text-xs font-bold text-white">Minimum Balance (&gt; 0.01 ECHO)</span>
-            </div>
-            <CheckCircle2 className="w-4 h-4 text-teal-400" />
-          </div>
-
-          <div className="glass p-4 rounded-2xl border border-white/5 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="text-slate-600 w-5 h-5" />
-              <span className="text-xs font-bold text-slate-600">KYC Verification (Phase 2)</span>
-            </div>
-            <div className="w-4 h-4 rounded-full border border-slate-700" />
           </div>
         </div>
       </div>
