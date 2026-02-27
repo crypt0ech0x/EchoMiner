@@ -36,7 +36,13 @@ export interface UserStats {
   id: string;
   username: string;
   balance: number;
+
+  // Old UI field:
   totalMined: number;
+
+  // New server field (keep optional so old UI still compiles)
+  totalMinedEcho?: number;
+
   referrals: number;
   joinedDate: number;
   guest: boolean;
@@ -57,6 +63,7 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
+// Old UI session shape:
 export interface MiningSession {
   id: string;
   isActive: boolean;
@@ -68,7 +75,8 @@ export interface MiningSession {
   purchaseMultiplier: number;
   effectiveRate: number;
   status: "active" | "ended" | "settled";
-  // NOTE: your old UI didn’t have this, but some of your new code referenced it:
+
+  // New server field (optional)
   sessionMined?: number;
 }
 
@@ -108,31 +116,8 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-/**
- * What your UI expects everywhere.
- * We’ll keep this stable and map server -> this.
- */
-export interface AppState {
-  user: UserStats;
-  streak: StreakInfo;
-  session: MiningSession;
-  activeBoosts: ActiveBoost[];
-  ledger: LedgerEntry[];
-  purchaseHistory: any[];
-  notifications: AppNotification[];
-
-  walletAddress: string | null;
-  walletVerifiedAt: number | null;
-  currentNonce: string | null;
-
-  // helpful flags for new server auth model
-  authed?: boolean;
-}
-
-/**
- * What your /api/state currently returns (based on your JSON output).
- */
-export interface ApiState {
+// --- NEW: API STATE returned by /api/state ---
+export type ApiState = {
   ok: boolean;
   authed: boolean;
   wallet: {
@@ -150,6 +135,25 @@ export interface ApiState {
     baseRatePerHr: number;
     multiplier: number;
     sessionMined: number;
-    endsAt?: string | null;
   };
+};
+
+export interface AppState {
+  user: UserStats;
+  streak: StreakInfo;
+  session: MiningSession;
+  activeBoosts: ActiveBoost[];
+  ledger: LedgerEntry[];
+  purchaseHistory: any[];
+  notifications: AppNotification[];
+
+  // Wallet fields your UI expects:
+  walletAddress: string | null;
+  walletVerifiedAt: number | null;
+  currentNonce: string | null;
+
+  // Extra flags (optional) so you can use them without crashing
+  ok?: boolean;
+  authed?: boolean;
+  wallet?: ApiState["wallet"];
 }
