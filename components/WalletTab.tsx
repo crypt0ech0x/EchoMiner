@@ -23,8 +23,7 @@ type WalletServerState = {
 
 type Props = {
   totalMinedEcho?: number;
-  walletFromServer?: WalletServerState;
-  onVerified?: () => void | Promise<void>;
+  verifiedWalletAddress?: string | null;
 };
 
 export default function WalletTab({
