@@ -36,16 +36,12 @@ export interface UserStats {
   id: string;
   username: string;
   balance: number;
-
-  // IMPORTANT: your UI uses totalMined
   totalMined: number;
-
   referrals: number;
   joinedDate: number;
   guest: boolean;
   riskScore: number;
   referralCode: string;
-
   isAdmin?: boolean;
   priorityAirdrop?: boolean;
   pfpUrl?: string;
@@ -61,28 +57,18 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
-/**
- * UI MiningSession (what your MineTab likely expects)
- * Keep this stable to avoid rewriting the whole UI.
- */
 export interface MiningSession {
   id: string;
   isActive: boolean;
-
   startTime: number | null;
   endTime: number | null;
-
   baseRate: number;
-
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-
   effectiveRate: number;
-
   status: "active" | "ended" | "settled";
-
-  // Add this so you can display mined so far if you want
+  // NOTE: your old UI didn’t have this, but some of your new code referenced it:
   sessionMined?: number;
 }
 
@@ -122,6 +108,10 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
+/**
+ * What your UI expects everywhere.
+ * We’ll keep this stable and map server -> this.
+ */
 export interface AppState {
   user: UserStats;
   streak: StreakInfo;
@@ -131,41 +121,35 @@ export interface AppState {
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // Your existing wallet fields (UI legacy)
   walletAddress: string | null;
   walletVerifiedAt: number | null;
-
-  // Some older flows used nonce in the client
   currentNonce: string | null;
+
+  // helpful flags for new server auth model
+  authed?: boolean;
 }
 
-/* ------------------------------------------------------------------ */
-/* NEW: API response types (matches your DB-backed /api/state output)  */
-/* ------------------------------------------------------------------ */
-
-export type ApiWallet = {
-  address: string | null;
-  verified: boolean;
-  verifiedAt: string | null; // ISO
-};
-
-export type ApiUser = {
-  totalMinedEcho: number;
-};
-
-export type ApiMiningSession = {
-  isActive: boolean;
-  startedAt: string | null;      // ISO
-  lastAccruedAt: string | null;  // ISO
-  baseRatePerHr: number;
-  multiplier: number;
-  sessionMined: number;
-};
-
-export type ApiState = {
+/**
+ * What your /api/state currently returns (based on your JSON output).
+ */
+export interface ApiState {
   ok: boolean;
   authed: boolean;
-  wallet: ApiWallet;
-  user: ApiUser;
-  session: ApiMiningSession;
-};
+  wallet: {
+    address: string | null;
+    verified: boolean;
+    verifiedAt: string | null;
+  };
+  user: {
+    totalMinedEcho: number;
+  };
+  session: {
+    isActive: boolean;
+    startedAt: string | null;
+    lastAccruedAt: string | null;
+    baseRatePerHr: number;
+    multiplier: number;
+    sessionMined: number;
+    endsAt?: string | null;
+  };
+}
