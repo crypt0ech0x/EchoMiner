@@ -111,9 +111,9 @@ const App: React.FC = () => {
      case Tab.WALLET:
       return (
         <WalletTab
-          totalMinedEcho={state.user.totalMined}
-          verifiedWalletAddress={state.walletAddress ?? null}
-        />
+  totalMinedEcho={state.user.totalMined}
+  verifiedWalletAddress={state.walletAddress ?? null}
+/>
       );
     default:
       return null;
