@@ -1,99 +1,246 @@
-"use client";
+// app/admin/db/page.tsx
+import { prisma } from "@/lib/prisma";
 
-import React, { useMemo, useState } from "react";
+// Simple protection:
+// Set ADMIN_KEY in Vercel env vars, then visit: /admin/db?key=YOUR_ADMIN_KEY
+export default async function AdminDbPage({
+  searchParams,
+}: {
+  searchParams: { key?: string };
+}) {
+  const required = process.env.ADMIN_KEY;
 
-type DbResponse = {
-  ok: boolean;
-  error?: string;
-  summary?: {
-    users: number;
-    wallets: number;
-    sessions: number;
-    miningSessions: number;
-    miningHistoryCount: number;
-  };
-  users?: any[];
-  wallets?: any[];
-  sessions?: any[];
-  miningSessions?: any[];
-};
-
-export default function AdminDbPage() {
-  const [secret, setSecret] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState<DbResponse | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const pretty = useMemo(() => (data ? JSON.stringify(data, null, 2) : ""), [data]);
-
-  async function load() {
-    setErr(null);
-    setLoading(true);
-    setData(null);
-    try {
-      const res = await fetch(`/api/admin/db?secret=${encodeURIComponent(secret)}`);
-      const json = (await res.json()) as DbResponse;
-      if (!res.ok) throw new Error(json.error || `Request failed (${res.status})`);
-      setData(json);
-    } catch (e: any) {
-      setErr(e?.message || "Failed");
-    } finally {
-      setLoading(false);
-    }
+  if (required && searchParams.key !== required) {
+    return (
+      <div style={{ padding: 24, fontFamily: "system-ui" }}>
+        <h1 style={{ fontSize: 20, fontWeight: 800 }}>Unauthorized</h1>
+        <p style={{ marginTop: 8 }}>
+          Add <code>?key=...</code> to the URL (must match <code>ADMIN_KEY</code>).
+        </p>
+      </div>
+    );
   }
 
-  return (
-    <div className="min-h-screen bg-[#020617] text-white p-6">
-      <h1 className="text-2xl font-black mb-2">Admin DB Viewer</h1>
-      <p className="text-sm text-white/60 mb-6">
-        Enter your ADMIN_SECRET to load recent rows from Postgres (via Prisma).
-      </p>
+  // Pull a little bit of data from each table (customize as you like)
+  const [
+    userCount,
+    walletCount,
+    miningSessionCount,
+    miningHistoryCount,
+    sessionCount,
 
-      <div className="flex flex-col gap-3 max-w-xl">
-        <input
-          className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white"
-          placeholder="ADMIN_SECRET"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-        />
-        <button
-          className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 font-bold"
-          onClick={load}
-          disabled={loading || !secret}
-        >
-          {loading ? "Loading…" : "Load Database"}
-        </button>
-        {err && (
-          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-sm">
-            {err}
-          </div>
-        )}
+    users,
+    wallets,
+    miningSessions,
+    miningHistory,
+    sessions,
+  ] = await Promise.all([
+    prisma.user.count(),
+    prisma.wallet.count(),
+    prisma.miningSession.count(),
+    prisma.miningHistory.count(),
+    prisma.session.count(),
+
+    prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      include: { wallet: true, miningSession: true },
+    }),
+    prisma.wallet.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
+    prisma.miningSession.findMany({ orderBy: { updatedAt: "desc" }, take: 25 }),
+    prisma.miningHistory.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
+    prisma.session.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
+  ]);
+
+  return (
+    <div style={{ padding: 24, fontFamily: "system-ui" }}>
+      <h1 style={{ fontSize: 24, fontWeight: 900, marginBottom: 12 }}>DB Admin</h1>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+        <Badge label="Users" value={userCount} />
+        <Badge label="Wallets" value={walletCount} />
+        <Badge label="MiningSession" value={miningSessionCount} />
+        <Badge label="MiningHistory" value={miningHistoryCount} />
+        <Badge label="Sessions" value={sessionCount} />
       </div>
 
-      {data?.summary && (
-        <div className="mt-8 grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Stat label="Users" value={data.summary.users} />
-          <Stat label="Wallets" value={data.summary.wallets} />
-          <Stat label="Sessions" value={data.summary.sessions} />
-          <Stat label="Mining Sessions" value={data.summary.miningSessions} />
-          <Stat label="History rows" value={data.summary.miningHistoryCount} />
-        </div>
-      )}
+      <Section title="Wallets (latest 25)">
+        <Table
+          columns={["createdAt", "address", "verified", "verifiedAt", "userId"]}
+          rows={wallets.map((w) => ({
+            createdAt: fmt(w.createdAt),
+            address: w.address,
+            verified: String(w.verified),
+            verifiedAt: w.verifiedAt ? fmt(w.verifiedAt) : "",
+            userId: w.userId ?? "",
+          }))}
+        />
+      </Section>
 
-      {data && (
-        <pre className="mt-6 p-4 rounded-xl bg-black/30 border border-white/10 overflow-auto text-xs">
-          {pretty}
-        </pre>
-      )}
+      <Section title="Users (latest 25)">
+        <Table
+          columns={["createdAt", "id", "email", "totalMinedEcho", "walletAddress", "walletVerified"]}
+          rows={users.map((u) => ({
+            createdAt: fmt(u.createdAt),
+            id: u.id,
+            email: u.email ?? "",
+            totalMinedEcho: String(u.totalMinedEcho ?? 0),
+            walletAddress: u.wallet?.address ?? "",
+            walletVerified: String(u.wallet?.verified ?? false),
+          }))}
+        />
+      </Section>
+
+      <Section title="MiningSession (latest 25)">
+        <Table
+          columns={[
+            "updatedAt",
+            "userId",
+            "isActive",
+            "startedAt",
+            "lastAccruedAt",
+            "baseRatePerHr",
+            "multiplier",
+            "sessionMined",
+          ]}
+          rows={miningSessions.map((s) => ({
+            updatedAt: fmt(s.updatedAt),
+            userId: s.userId,
+            isActive: String(s.isActive),
+            startedAt: s.startedAt ? fmt(s.startedAt) : "",
+            lastAccruedAt: s.lastAccruedAt ? fmt(s.lastAccruedAt) : "",
+            baseRatePerHr: String(s.baseRatePerHr),
+            multiplier: String(s.multiplier),
+            sessionMined: String(s.sessionMined),
+          }))}
+        />
+      </Section>
+
+      <Section title="MiningHistory (latest 25)">
+        <Table
+          columns={["createdAt", "userId", "startedAt", "endedAt", "baseRatePerHr", "multiplier", "totalMined"]}
+          rows={miningHistory.map((h) => ({
+            createdAt: fmt(h.createdAt),
+            userId: h.userId,
+            startedAt: fmt(h.startedAt),
+            endedAt: fmt(h.endedAt),
+            baseRatePerHr: String(h.baseRatePerHr),
+            multiplier: String(h.multiplier),
+            totalMined: String(h.totalMined),
+          }))}
+        />
+      </Section>
+
+      <Section title="Sessions (latest 25)">
+        <Table
+          columns={["createdAt", "id", "userId", "expiresAt", "revokedAt"]}
+          rows={sessions.map((s) => ({
+            createdAt: fmt(s.createdAt),
+            id: s.id,
+            userId: s.userId,
+            expiresAt: fmt(s.expiresAt),
+            revokedAt: s.revokedAt ? fmt(s.revokedAt) : "",
+          }))}
+        />
+      </Section>
+
+      <p style={{ marginTop: 24, opacity: 0.7, fontSize: 12 }}>
+        Tip: remove this page or protect it more strongly before going public.
+      </p>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Badge({ label, value }: { label: string; value: number }) {
   return (
-    <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-      <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">{label}</div>
-      <div className="text-xl font-black mt-1">{value}</div>
+    <div
+      style={{
+        padding: "10px 12px",
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 12,
+        background: "rgba(255,255,255,0.04)",
+        color: "white",
+        minWidth: 140,
+      }}
+    >
+      <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 900 }}>{value}</div>
     </div>
   );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h2 style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+function Table({
+  columns,
+  rows,
+}: {
+  columns: string[];
+  rows: Array<Record<string, string>>;
+}) {
+  return (
+    <div style={{ overflowX: "auto", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
+        <thead>
+          <tr>
+            {columns.map((c) => (
+              <th
+                key={c}
+                style={{
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  fontSize: 12,
+                  opacity: 0.8,
+                  borderBottom: "1px solid rgba(255,255,255,0.12)",
+                  background: "rgba(255,255,255,0.04)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 ? (
+            <tr>
+              <td style={{ padding: 12, opacity: 0.7 }} colSpan={columns.length}>
+                No rows yet.
+              </td>
+            </tr>
+          ) : (
+            rows.map((r, idx) => (
+              <tr key={idx}>
+                {columns.map((c) => (
+                  <td
+                    key={c}
+                    style={{
+                      padding: "10px 12px",
+                      borderBottom: "1px solid rgba(255,255,255,0.08)",
+                      fontSize: 12,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {r[c] ?? ""}
+                  </td>
+                ))}
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function fmt(d: Date) {
+  // nice-ish readable
+  return new Date(d).toISOString().replace("T", " ").replace("Z", "Z");
 }
