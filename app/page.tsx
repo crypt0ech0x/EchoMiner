@@ -134,15 +134,16 @@ export default function EchoMinerApp() {
         {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
 
         {activeTab === Tab.WALLET && (
-          <WalletTab
-             totalMinedEcho={state.user.totalMined}
-             walletFromServer={{
-               address: state.walletAddress,
-               verified: !!state.walletVerifiedAt,
-               verifiedAt: state.walletVerifiedAt
-                 ? new Date(state.walletVerifiedAt).toISOString()
-                 : null,
-             }}
+  <WalletTab
+    totalMinedEcho={state.user.totalMined}
+    walletFromServer={{
+      address: state.walletAddress,
+      verified: !!state.walletVerifiedAt,
+      verifiedAt: state.walletVerifiedAt ? new Date(state.walletVerifiedAt).toISOString() : null,
+    }}
+    onVerified={async () => setState(await EchoAPI.getState())}
+  />
+)}
              onVerified={async () => {
                const fresh = await EchoAPI.getState();
                setState(fresh);
