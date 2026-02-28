@@ -4,6 +4,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Tab, AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
+
 import Layout from "@/components/Layout";
 import MineTab from "@/components/MineTab";
 import BoostTab from "@/components/BoostTab";
@@ -19,7 +20,9 @@ export default function EchoMinerApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // Load state once
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+
+  // 1) Initial load
   useEffect(() => {
     let mounted = true;
 
@@ -28,10 +31,13 @@ export default function EchoMinerApp() {
         setLoadError(null);
         const s = await EchoAPI.getState();
         if (!mounted) return;
+
         setState(s);
 
-        // If not authed, push them to wallet so they can connect/verify
-        if (s.authed === false) setActiveTab(Tab.WALLET);
+        // If wallet not verified yet, push user to Wallet tab
+        if (!s.walletAddress || !s.walletVerifiedAt) {
+          setActiveTab(Tab.WALLET);
+        }
       } catch (e: any) {
         if (!mounted) return;
         setLoadError(e?.message || "Failed to load state");
@@ -43,41 +49,57 @@ export default function EchoMinerApp() {
     };
   }, []);
 
-  // Periodic refresh (mining accrual). Don’t hammer every second.
+  // 2) UI clock tick (drives MineTab timers + animation)
+  useEffect(() => {
+    const t = setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // 3) Refresh mining session periodically (server accrual)
   useEffect(() => {
     if (!state) return;
 
-    const interval = setInterval(async () => {
+    const t = setInterval(async () => {
       try {
-        // only refresh aggressively if mining is active; otherwise just occasionally re-sync
+        // Only refresh frequently while active
         if (state.session?.isActive) {
           const updated = await EchoAPI.refreshState();
           setState(updated);
         }
       } catch {
-        // ignore refresh errors; UI still works
+        // Ignore refresh errors (don’t white-screen)
       }
     }, 2000);
 
-    return () => clearInterval(interval);
+    return () => clearInterval(t);
   }, [state?.session?.isActive]);
 
+  // 4) Compute session earnings for display while mining
   const sessionEarnings = useMemo(() => {
-     if (!state?.session?.isActive) return 0;
-  // We don’t have sessionMined in your types.ts, so use total mined delta if you want,
-  // or just show 0 here and rely on MineTab showing state.user.totalMined.
-    return 0;
-  }, [state]);
+    if (!state?.session?.isActive) return 0;
+    if (!state.session.startTime) return 0;
 
-  const effectiveRatePerHr = useMemo(() => {
-    return state?.session?.effectiveRate ?? 0;
-  }, [state]);
+    const elapsedSec = Math.max(0, (currentTime - state.session.startTime) / 1000);
 
+    // effectiveRate is ECHO per second (based on your MineTab usage: effectiveRate * 3600 = E/H)
+    const earned = elapsedSec * state.session.effectiveRate;
+
+    // If you want to clamp to session length, do it via endTime if present
+    if (state.session.endTime) {
+      const maxSec = Math.max(0, (state.session.endTime - state.session.startTime) / 1000);
+      return Math.min(earned, maxSec * state.session.effectiveRate);
+    }
+
+    return earned;
+  }, [state, currentTime]);
+
+  // If state failed to load
   if (loadError) {
     return (
       <div className="h-screen bg-background flex flex-col items-center justify-center text-center p-8">
         <div className="text-white/70 font-black tracking-widest mb-3">Couldn’t load</div>
         <div className="text-white/40 text-sm mb-6">{loadError}</div>
+
         <button
           className="px-5 py-3 rounded-xl bg-white/10 text-white font-bold"
           onClick={async () => {
@@ -85,7 +107,10 @@ export default function EchoMinerApp() {
               setLoadError(null);
               const s = await EchoAPI.getState();
               setState(s);
-              if (s.authed === false) setActiveTab(Tab.WALLET);
+
+              if (!s.walletAddress || !s.walletVerifiedAt) {
+                setActiveTab(Tab.WALLET);
+              }
             } catch (e: any) {
               setLoadError(e?.message || "Failed to load state");
             }
@@ -97,6 +122,7 @@ export default function EchoMinerApp() {
     );
   }
 
+  // Loading skeleton
   if (!state) {
     return (
       <div className="h-screen bg-background flex items-center justify-center font-black tracking-widest text-white/20 animate-pulse">
@@ -121,31 +147,38 @@ export default function EchoMinerApp() {
           <MineTab
             state={state}
             sessionEarnings={sessionEarnings}
-            effectiveRate={effectiveRatePerHr}
-            totalMultiplier={state.session?.baseRate ? state.session.effectiveRate / state.session.baseRate : 1}
-            currentTime={Date.now()}
+            onStartSession={async () => {
+              const updated = await EchoAPI.startSession();
+              setState(updated);
+            }}
+            totalMultiplier={
+              state.session?.baseRate > 0 ? state.session.effectiveRate / state.session.baseRate : 1
+            }
+            effectiveRate={state.session.effectiveRate}
+            currentTime={currentTime}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
-            onStartSession={async () => setState(await EchoAPI.startSession())}
           />
         )}
 
         {activeTab === Tab.BOOST && (
-          <BoostTab state={state} onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())} currentTime={Date.now()} />
+          <BoostTab
+            state={state}
+            onApplyAdBoost={async () => {
+              const updated = await EchoAPI.activateAdBoost();
+              setState(updated);
+            }}
+            currentTime={currentTime}
+          />
         )}
 
         {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
 
         {activeTab === Tab.WALLET && (
-  <WalletTab
-    totalMinedEcho={state.user.totalMined}
-    walletFromServer={{
-      address: state.walletAddress,
-      verified: !!state.walletVerifiedAt,
-      verifiedAt: state.walletVerifiedAt ? new Date(state.walletVerifiedAt).toISOString() : null,
-    }}
-    onVerified={async () => setState(await EchoAPI.getState())}
-  />
-)}
+          <WalletTab
+            totalMinedEcho={state.user.totalMined}
+            verifiedWalletAddress={state.walletAddress ?? null}
+          />
+        )}
       </Layout>
 
       <ProfileDrawer
