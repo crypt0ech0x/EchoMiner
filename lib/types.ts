@@ -35,14 +35,8 @@ export interface NotificationPreferences {
 export interface UserStats {
   id: string;
   username: string;
-  balance: number;
-
-  // Old UI field:
-  totalMined: number;
-
-  // New server field (keep optional so old UI still compiles)
-  totalMinedEcho?: number;
-
+  balance: number; // UI balance (we'll map totalMinedEcho here)
+  totalMined: number; // also map totalMinedEcho here for existing UI usage
   referrals: number;
   joinedDate: number;
   guest: boolean;
@@ -63,21 +57,26 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
-// Old UI session shape:
 export interface MiningSession {
   id: string;
   isActive: boolean;
-  startTime: number | null;
-  endTime: number | null;
-  baseRate: number;
+
+  // UI expects these:
+  startTime: number | null; // ms
+  endTime: number | null; // ms
+
+  // UI expects these multipliers/rates:
+  baseRate: number; // E/sec (UI naming)
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number;
+  effectiveRate: number; // E/sec
+
   status: "active" | "ended" | "settled";
 
-  // New server field (optional)
-  sessionMined?: number;
+  // ✅ NEW: server-backed truth so MineTab can show real mined amount
+  sessionMined: number; // ECHO earned this session (server truth)
+  lastAccruedAt: number | null; // ms (server truth)
 }
 
 export interface ActiveBoost {
@@ -116,44 +115,60 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-// --- NEW: API STATE returned by /api/state ---
+/**
+ * ✅ Server API response types (what your /api/state is actually returning now)
+ */
+export type ApiWallet = {
+  address: string | null;
+  verified: boolean;
+  verifiedAt: string | null; // ISO string or null
+};
+
+export type ApiUser = {
+  totalMinedEcho: number;
+};
+
+export type ApiMiningSession = {
+  isActive: boolean;
+  startedAt: string | null; // ISO
+  lastAccruedAt: string | null; // ISO
+  baseRatePerHr: number;
+  multiplier: number;
+  sessionMined: number;
+};
+
 export type ApiState = {
   ok: boolean;
   authed: boolean;
-  wallet: {
-    address: string | null;
-    verified: boolean;
-    verifiedAt: string | null;
-  };
-  user: {
-    totalMinedEcho: number;
-  };
-  session: {
-    isActive: boolean;
-    startedAt: string | null;
-    lastAccruedAt: string | null;
-    baseRatePerHr: number;
-    multiplier: number;
-    sessionMined: number;
-  };
+  wallet: ApiWallet;
+  user: ApiUser;
+  session: ApiMiningSession;
+  endsAt?: string | null; // some routes return this
+  earned?: number; // refresh returns earned
 };
 
+/**
+ * ✅ AppState used by UI components
+ * We keep your existing fields, but add `authed` + `wallet` for server truth.
+ */
 export interface AppState {
+  // ✅ server auth info
+  authed: boolean;
+
+  // ✅ server wallet info
+  wallet: ApiWallet;
+
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
+
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // Wallet fields your UI expects:
+  // kept for backward compatibility with older code:
   walletAddress: string | null;
-  walletVerifiedAt: number | null;
+  walletVerifiedAt: number | null; // ms
   currentNonce: string | null;
-
-  // Extra flags (optional) so you can use them without crashing
-  ok?: boolean;
-  authed?: boolean;
-  wallet?: ApiState["wallet"];
 }
