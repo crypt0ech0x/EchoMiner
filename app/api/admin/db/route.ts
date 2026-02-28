@@ -1,49 +1,53 @@
+// app/api/admin/db/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 function unauthorized() {
-  return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return new NextResponse("Unauthorized", {
+    status: 401,
+    headers: { "WWW-Authenticate": 'Basic realm="Admin DB"' },
+  });
+}
+
+function parseBasicAuth(req: Request) {
+  const auth = req.headers.get("authorization");
+  if (!auth?.startsWith("Basic ")) return null;
+  const b64 = auth.slice("Basic ".length);
+  const [user, pass] = Buffer.from(b64, "base64").toString("utf8").split(":");
+  return { user, pass };
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const secret = url.searchParams.get("secret");
-  if (!secret || secret !== process.env.ADMIN_SECRET) return unauthorized();
+  const creds = parseBasicAuth(req);
+  if (
+    !creds ||
+    creds.user !== process.env.ADMIN_USER ||
+    creds.pass !== process.env.ADMIN_PASS
+  ) {
+    return unauthorized();
+  }
 
-  // Keep this lightweight (don’t dump huge tables)
-  const [users, wallets, sessions, miningSessions, miningHistoryCount] = await Promise.all([
+  // Pull useful “tables” (customize as needed)
+  const [users, wallets, miningSessions, miningHistory, sessions] = await Promise.all([
     prisma.user.findMany({
-      take: 50,
       orderBy: { createdAt: "desc" },
+      take: 200,
       include: { wallet: true },
     }),
-    prisma.wallet.findMany({
-      take: 50,
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.session.findMany({
-      take: 50,
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.miningSession.findMany({
-      take: 50,
-      orderBy: { updatedAt: "desc" },
-    }),
-    prisma.miningHistory.count(),
+    prisma.wallet.findMany({ orderBy: { updatedAt: "desc" }, take: 200 }),
+    prisma.miningSession.findMany({ orderBy: { updatedAt: "desc" }, take: 200 }),
+    prisma.miningHistory.findMany({ orderBy: { createdAt: "desc" }, take: 200 }),
+    prisma.session.findMany({ orderBy: { createdAt: "desc" }, take: 200 }),
   ]);
 
   return NextResponse.json({
     ok: true,
-    summary: {
-      users: users.length,
-      wallets: wallets.length,
-      sessions: sessions.length,
-      miningSessions: miningSessions.length,
-      miningHistoryCount,
+    tables: {
+      users,
+      wallets,
+      miningSessions,
+      miningHistory,
+      sessions,
     },
-    users,
-    wallets,
-    sessions,
-    miningSessions,
   });
 }
