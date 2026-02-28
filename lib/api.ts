@@ -1,13 +1,8 @@
 // lib/api.ts
-import type {
-  AppState,
-  NotificationPreferences,
-  NotificationType,
-} from "./types";
+import type { AppState, NotificationPreferences } from "./types";
 
 /**
- * This is the shape returned by /api/state (server truth).
- * We convert it into the legacy AppState your UI expects.
+ * Server /api/state response shape (your current route.ts)
  */
 type ApiState = {
   ok: boolean;
@@ -15,308 +10,301 @@ type ApiState = {
   wallet: {
     address: string | null;
     verified: boolean;
-    verifiedAt: string | null;
+    verifiedAt: string | null; // ISO
   };
   user: {
     totalMinedEcho: number;
   };
   session: {
     isActive: boolean;
-    startedAt: string | null;
-    lastAccruedAt: string | null;
+    startedAt: string | null; // ISO
+    lastAccruedAt: string | null; // ISO
     baseRatePerHr: number;
     multiplier: number;
     sessionMined: number;
   };
 };
 
-function nowMs() {
-  return Date.now();
+type Json = Record<string, any>;
+
+const STORAGE_KEY = "echo_miner_state_v1";
+
+// ---------- helpers (no `this`, fully typed) ----------
+function safeJsonParse<T>(value: string | null): T | null {
+  if (!value) return null;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
 }
 
-function safeNum(v: unknown, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
+function loadLocal(): AppState | null {
+  if (typeof window === "undefined") return null;
+  return safeJsonParse<AppState>(localStorage.getItem(STORAGE_KEY));
 }
 
-function safeStr(v: unknown, fallback = "") {
-  return typeof v === "string" ? v : fallback;
+function saveLocal(state: AppState) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function safeBool(v: unknown, fallback = false) {
-  return typeof v === "boolean" ? v : fallback;
+async function fetchJson(url: string, init?: RequestInit): Promise<any> {
+  const res = await fetch(url, {
+    // keep cookies for session auth
+    credentials: "include",
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      "Content-Type": "application/json",
+    },
+  });
+
+  // Next can return HTML on edge failures; guard it
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // not json
+  }
+
+  if (!res.ok) {
+    const msg =
+      (data && (data.error || data.message)) ||
+      `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
+
+  return data;
 }
 
-function parseDateMs(v: string | null): number | null {
-  if (!v) return null;
-  const ms = Date.parse(v);
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function defaultPrefs(): NotificationPreferences {
-  return {
-    session_end: true,
-    streak_grace_warning: true,
-    boost_expired: true,
-    weekly_summary: true,
-    airdrop_announcement: true,
-  };
+function isoToMs(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
 }
 
 /**
- * Convert server ApiState -> UI AppState (legacy shape).
- * We keep as much as possible from previous local state (prev),
- * but overwrite wallet + mined totals + session fields with server truth.
+ * Map server ApiState -> your UI AppState.
+ * We keep everything the UI expects, filling defaults and preserving prior local state.
  */
-function apiToAppState(api: ApiState, prev?: AppState): AppState {
-  const prevUser = prev?.user;
+function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
+  const p = prev ?? ({} as AppState);
 
-  const totalMined = safeNum(api?.user?.totalMinedEcho, 0);
+  const walletAddress = api.wallet?.address ?? null;
+  const walletVerifiedAt = api.wallet?.verifiedAt
+    ? Date.parse(api.wallet.verifiedAt)
+    : null;
 
-  // Mining session: your UI expects "effectiveRate" (per second) and "baseRate" (per second)
-  const baseRatePerHr = safeNum(api?.session?.baseRatePerHr, 0);
-  const multiplier = safeNum(api?.session?.multiplier, 1);
+  // --- session mapping ---
+  const startedAtMs = isoToMs(api.session?.startedAt ?? null);
+  const endTimeMs =
+    startedAtMs != null ? startedAtMs + 3 * 60 * 60 * 1000 : null; // 3h session window
 
-  const baseRatePerSec = baseRatePerHr / 3600;
-  const effectiveRatePerSec = baseRatePerSec * multiplier;
+  const baseRate = Number(api.session?.baseRatePerHr ?? 0);
+  const mult = Number(api.session?.multiplier ?? 1);
+  const effectiveRatePerHr = baseRate * mult;
 
-  const startedAtMs = parseDateMs(api?.session?.startedAt ?? null);
-  const endAtMs =
-    startedAtMs != null ? startedAtMs + 3 * 60 * 60 * 1000 : null; // 3 hours (matches your routes)
+  // Your UI expects MiningSession.effectiveRate to be "per second" (based on earlier code)
+  // so we store effectiveRate as "per second" to keep UI math stable.
+  const effectiveRatePerSec = effectiveRatePerHr / 3600;
 
-  const walletAddress = api?.wallet?.address ?? null;
-  const walletVerifiedAtMs = parseDateMs(api?.wallet?.verifiedAt ?? null);
+  // Some UIs use balance, totalMined, etc. We keep existing if present.
+  const userId = p.user?.id ?? "guest";
+  const username = p.user?.username ?? "Voyager";
 
-  return {
+  const state: AppState = {
+    // --- user ---
     user: {
-      // keep existing fields so UI doesn't blow up
-      id: prevUser?.id ?? "guest",
-      username: prevUser?.username ?? "Voyager",
-      balance: prevUser?.balance ?? 0,
-      totalMined, // ✅ your types.ts expects totalMined
-      referrals: prevUser?.referrals ?? 0,
-      joinedDate: prevUser?.joinedDate ?? nowMs(),
-      guest: prevUser?.guest ?? !api.authed,
-      riskScore: prevUser?.riskScore ?? 0,
-      referralCode: prevUser?.referralCode ?? "ECHO0000",
-      isAdmin: prevUser?.isAdmin ?? false,
-      priorityAirdrop: prevUser?.priorityAirdrop ?? false,
-      pfpUrl: prevUser?.pfpUrl,
-      email: prevUser?.email,
-      emailVerified: prevUser?.emailVerified ?? false,
-      notificationPreferences: prevUser?.notificationPreferences ?? defaultPrefs(),
+      ...(p.user ?? ({} as any)),
+      id: userId,
+      username,
+      balance: p.user?.balance ?? 0,
+      totalMined: Number(api.user?.totalMinedEcho ?? 0),
+      referrals: p.user?.referrals ?? 0,
+      joinedDate: p.user?.joinedDate ?? Date.now(),
+      guest: p.user?.guest ?? !api.authed,
+      riskScore: p.user?.riskScore ?? 0,
+      referralCode: p.user?.referralCode ?? "ECHO-0000",
+      isAdmin: p.user?.isAdmin ?? false,
+      priorityAirdrop: p.user?.priorityAirdrop ?? false,
+      pfpUrl: p.user?.pfpUrl,
+      email: p.user?.email,
+      emailVerified: p.user?.emailVerified ?? false,
+      notificationPreferences: p.user?.notificationPreferences ?? {
+        session_end: true,
+        streak_grace_warning: true,
+        boost_expired: true,
+        weekly_summary: true,
+        airdrop_announcement: true,
+      },
     },
 
-    streak: prev?.streak ?? {
+    // --- streak (keep existing; server not providing yet) ---
+    streak: p.streak ?? {
       currentStreak: 0,
       lastSessionStartAt: null,
       lastSessionEndAt: null,
       graceEndsAt: null,
     },
 
+    // --- session ---
     session: {
-      id: prev?.session?.id ?? "session",
-      isActive: safeBool(api?.session?.isActive, false),
+      ...(p.session ?? ({} as any)),
+      id: p.session?.id ?? "active",
+      isActive: !!api.session?.isActive,
       startTime: startedAtMs,
-      endTime: endAtMs,
-      baseRate: baseRatePerSec,
-      streakMultiplier: 1,
-      boostMultiplier: 1,
-      purchaseMultiplier: 1,
-      effectiveRate: effectiveRatePerSec,
-      status: safeBool(api?.session?.isActive, false) ? "active" : "ended",
+      endTime: endTimeMs,
+      baseRate: baseRate,
+      streakMultiplier: p.session?.streakMultiplier ?? 1,
+      boostMultiplier: p.session?.boostMultiplier ?? 1,
+      purchaseMultiplier: p.session?.purchaseMultiplier ?? 1,
+      effectiveRate: effectiveRatePerSec, // used by MineTab UI math
+      status: api.session?.isActive ? "active" : "ended",
     },
 
-    activeBoosts: prev?.activeBoosts ?? [],
-    ledger: prev?.ledger ?? [],
-    purchaseHistory: prev?.purchaseHistory ?? [],
-    notifications: prev?.notifications ?? [],
+    // --- boosts/ledger/history/notifications keep local until you DB them ---
+    activeBoosts: p.activeBoosts ?? [],
+    ledger: p.ledger ?? [],
+    purchaseHistory: p.purchaseHistory ?? [],
+    notifications: p.notifications ?? [],
 
-    // ✅ legacy wallet fields your UI uses
+    // --- wallet fields used by your UI ---
     walletAddress,
-    walletVerifiedAt: walletVerifiedAtMs,
-    currentNonce: prev?.currentNonce ?? null,
+    walletVerifiedAt,
+    currentNonce: p.currentNonce ?? null,
   };
+
+  return state;
 }
 
-async function fetchJson(url: string, init?: RequestInit) {
-  const res = await fetch(url, {
-    ...init,
-    // IMPORTANT: sends your session cookie on Vercel
-    credentials: "include",
-    headers: {
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  // Helpful error if server returns HTML/error page
-  const text = await res.text();
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    // not JSON
-  }
-
-  if (!res.ok) {
-    const message =
-      (data && (data.error || data.message)) ||
-      `Request failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  return data;
-}
-
+// ---------- public API ----------
 export const EchoAPI = {
-  STORAGE_KEY: "echo_miner_state_v1",
+  STORAGE_KEY,
 
-  loadLocal(): AppState | null {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = localStorage.getItem(this.STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as AppState) : null;
-    } catch {
-      return null;
-    }
-  },
-
-  saveLocal(state: AppState) {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // ignore
-    }
-  },
+  loadLocal,
+  saveLocal,
 
   /**
-   * Always:
-   *   /api/state (ApiState) -> AppState
+   * GET /api/state returns ApiState.
+   * We normalize it into AppState for the UI.
    */
   async getState(): Promise<AppState> {
-    const prev = this.loadLocal() ?? undefined;
+    const prev = loadLocal();
     const api = (await fetchJson("/api/state", { method: "GET" })) as ApiState;
 
-    // Guard so we never crash on missing wallet
-    const safeApi: ApiState = {
-      ok: !!api?.ok,
-      authed: !!api?.authed,
-      wallet: {
-        address: api?.wallet?.address ?? null,
-        verified: !!api?.wallet?.verified,
-        verifiedAt: api?.wallet?.verifiedAt ?? null,
-      },
-      user: {
-        totalMinedEcho: safeNum(api?.user?.totalMinedEcho, 0),
-      },
-      session: {
-        isActive: !!api?.session?.isActive,
-        startedAt: api?.session?.startedAt ?? null,
-        lastAccruedAt: api?.session?.lastAccruedAt ?? null,
-        baseRatePerHr: safeNum(api?.session?.baseRatePerHr, 0),
-        multiplier: safeNum(api?.session?.multiplier, 1),
-        sessionMined: safeNum(api?.session?.sessionMined, 0),
-      },
-    };
+    // Hard safety: ensure wallet object exists
+    if (!api || typeof api !== "object") {
+      throw new Error("Bad /api/state response");
+    }
+    if (!api.wallet) {
+      (api as any).wallet = { address: null, verified: false, verifiedAt: null };
+    }
+    if (!api.session) {
+      (api as any).session = {
+        isActive: false,
+        startedAt: null,
+        lastAccruedAt: null,
+        baseRatePerHr: 0,
+        multiplier: 1,
+        sessionMined: 0,
+      };
+    }
+    if (!api.user) {
+      (api as any).user = { totalMinedEcho: 0 };
+    }
 
-    const app = apiToAppState(safeApi, prev);
-    this.saveLocal(app);
+    const app = apiToAppState(api, prev);
+    saveLocal(app);
     return app;
   },
 
   /**
-   * Hit refresh endpoint (server accrues mining), then re-pull /api/state.
+   * POST /api/mining/refresh
+   * Server reads session cookie + DB, no need to send state.
    */
   async refreshState(): Promise<AppState> {
-    await fetchJson("/api/mining/refresh", { method: "POST" });
-    return await this.getState();
+    await fetchJson("/api/mining/refresh", { method: "POST", body: "{}" });
+    // refresh endpoint returns mining info, but easiest is: re-pull canonical state
+    return this.getState();
   },
 
   /**
-   * Start a session server-side, then re-pull /api/state.
+   * POST /api/mining/start
+   * IMPORTANT: your server requires baseRatePerHr > 0.
+   * If UI calls startSession() with no args, we provide sane defaults so mining isn't 0.
    */
   async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
-  const res = await fetch("/api/mining/start", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      baseRatePerHr: payload?.baseRatePerHr ?? 1,
-      multiplier: payload?.multiplier ?? 1,
-    }),
-  });
+    const baseRatePerHr =
+      Number(payload?.baseRatePerHr ?? 10); // default so it actually mines
+    const multiplier = Number(payload?.multiplier ?? 1);
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => null);
-    throw new Error(err?.error || err?.message || "Failed to start session");
-  }
+    await fetchJson("/api/mining/start", {
+      method: "POST",
+      body: JSON.stringify({ baseRatePerHr, multiplier }),
+    });
 
-  // IMPORTANT: after starting, immediately refetch /api/state so UI uses server truth
-  return await this.getState();
-}
+    return this.getState();
+  },
 
   async activateAdBoost(): Promise<AppState> {
-    await fetchJson("/api/boost/activate", { method: "POST" });
-    return await this.getState();
+    await fetchJson("/api/boost/activate", { method: "POST", body: "{}" });
+    return this.getState();
   },
 
   async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
     await fetchJson("/api/profile", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
     });
-    return await this.getState();
+    return this.getState();
   },
 
   async verifyEmail(email: string): Promise<AppState> {
     await fetchJson("/api/profile/verify-email", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
     });
-    return await this.getState();
+    return this.getState();
   },
 
   async handleNotifications(action: "read" | "readAll" | "clear", id?: string): Promise<AppState> {
     const method = action === "clear" ? "DELETE" : "PATCH";
     await fetchJson("/api/notifications", {
       method,
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, id }),
     });
-    return await this.getState();
+    return this.getState();
   },
 
   async updateNotificationPreferences(prefs: NotificationPreferences): Promise<AppState> {
     await fetchJson("/api/notifications/preferences", {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prefs }),
     });
-    return await this.getState();
+    return this.getState();
   },
 
   async getSnapshotCSV(): Promise<string> {
-    const data = await fetchJson("/api/snapshot", { method: "POST" });
-    return safeStr(data?.csv, "");
+    const data = (await fetchJson("/api/snapshot", { method: "POST", body: "{}" })) as Json;
+    return String(data?.csv ?? "");
   },
 
   async createStripeSession(itemId: string): Promise<string> {
-    const data = await fetchJson("/api/store/checkout", {
+    const data = (await fetchJson("/api/store/checkout", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ itemId }),
-    });
-    return safeStr(data?.sessionId, "");
+    })) as Json;
+
+    return String(data?.sessionId ?? "");
   },
 
   async handleStripeWebhook(sessionId: string): Promise<AppState> {
     await fetchJson("/api/store/webhook", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId }),
     });
-    return await this.getState();
+    return this.getState();
   },
 };
