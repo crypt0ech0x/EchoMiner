@@ -1,85 +1,13 @@
 // lib/api.ts
 import { AppState, NotificationPreferences } from "./types";
 
-type ApiState = {
-  ok: boolean;
-  authed: boolean;
-  wallet: { address: string | null; verified: boolean; verifiedAt: string | null };
-  user: { totalMinedEcho: number };
-  session: {
-    isActive: boolean;
-    startedAt: string | null;
-    lastAccruedAt: string | null;
-    baseRatePerHr: number;
-    multiplier: number;
-    sessionMined: number;
-  };
-};
-
-function mustOk(res: Response, body: any) {
-  if (res.ok) return;
-  const msg =
-    body?.error ||
-    body?.message ||
-    `Request failed (${res.status})`;
-  throw new Error(msg);
-}
-
-/**
- * Convert your new API shape -> your existing AppState shape (lib/types.ts)
- * so the UI doesn’t have to guess.
- */
-function apiToAppState(api: ApiState, prev?: AppState): AppState {
-  const now = Date.now();
-
-  return {
-    // --- user ---
-    user: {
-      ...(prev?.user ?? ({} as any)),
-      totalMined: api.user.totalMinedEcho ?? 0, // your types.ts uses totalMined
-    },
-
-    // --- wallet ---
-    walletAddress: api.wallet.address,
-    walletVerifiedAt: api.wallet.verifiedAt ? Date.parse(api.wallet.verifiedAt) : null,
-    currentNonce: prev?.currentNonce ?? null,
-
-    // --- session (map to your existing MiningSession interface) ---
-    session: {
-      ...(prev?.session ?? ({} as any)),
-      isActive: api.session.isActive,
-      startTime: api.session.startedAt ? Date.parse(api.session.startedAt) : null,
-      endTime: null, // you can compute this if you want (3h from startTime)
-      baseRate: api.session.baseRatePerHr ?? 0,
-      // your UI had multipliers split out; collapse into effectiveRate for now:
-      streakMultiplier: 1,
-      boostMultiplier: 1,
-      purchaseMultiplier: 1,
-      effectiveRate: (api.session.baseRatePerHr ?? 0) * (api.session.multiplier ?? 1),
-      status: api.session.isActive ? "active" : "ended",
-    },
-
-    // keep the rest of the legacy state so UI doesn’t crash
-    streak: prev?.streak ?? {
-      currentStreak: 0,
-      lastSessionStartAt: null,
-      lastSessionEndAt: null,
-      graceEndsAt: null,
-    },
-    activeBoosts: prev?.activeBoosts ?? [],
-    ledger: prev?.ledger ?? [],
-    purchaseHistory: prev?.purchaseHistory ?? [],
-    notifications: prev?.notifications ?? [],
-  };
-}
-
 export const EchoAPI = {
   STORAGE_KEY: "echo_miner_state_v1",
 
   loadLocal(): AppState {
-    if (typeof window === "undefined") return null as any;
+    if (typeof window === "undefined") return {} as AppState;
     const raw = localStorage.getItem(this.STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AppState) : (null as any);
+    return raw ? (JSON.parse(raw) as AppState) : ({} as AppState);
   },
 
   saveLocal(state: AppState) {
@@ -89,26 +17,20 @@ export const EchoAPI = {
   },
 
   async getState(): Promise<AppState> {
-    const prev = typeof window !== "undefined" ? this.loadLocal() : undefined;
-
     const res = await fetch("/api/state", { method: "GET" });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-
-    const api = body as ApiState;
-    const next = apiToAppState(api, prev);
-    this.saveLocal(next);
-    return next;
+    if (!res.ok) throw new Error(`getState failed (${res.status})`);
+    const newState = (await res.json()) as AppState;
+    this.saveLocal(newState);
+    return newState;
   },
 
   async refreshState(): Promise<AppState> {
-    // IMPORTANT: refresh route uses cookie server-side; don't send state.
+    // If your server refresh route needs POST:
     const res = await fetch("/api/mining/refresh", { method: "POST" });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-
-    // refresh returns mining numbers, but easiest is: just refetch /api/state
-    return await this.getState();
+    if (!res.ok) throw new Error(`refreshState failed (${res.status})`);
+    const newState = (await res.json()) as AppState;
+    this.saveLocal(newState);
+    return newState;
   },
 
   async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
@@ -116,52 +38,41 @@ export const EchoAPI = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        baseRatePerHr: payload?.baseRatePerHr ?? 10, // pick your default
+        baseRatePerHr: payload?.baseRatePerHr ?? 1,
         multiplier: payload?.multiplier ?? 1,
       }),
     });
-
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-
-    return await this.getState();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Failed to start session");
+    this.saveLocal(data as AppState);
+    return data as AppState;
   },
 
   async activateAdBoost(): Promise<AppState> {
     const res = await fetch("/api/boost/activate", { method: "POST" });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-    return await this.getState();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Boost failed");
+    this.saveLocal(data as AppState);
+    return data as AppState;
   },
 
-  // Keep these so old UI calls don't break (adjust routes if you have them)
-  async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
-    const res = await fetch("/api/profile", {
-      method: "PATCH",
+  // ✅ ADD THIS BACK (this fixes your ProfileDrawer compile error)
+  async handleNotifications(action: "read" | "readAll" | "clear", id?: string): Promise<AppState> {
+    const method = action === "clear" ? "DELETE" : "PATCH";
+
+    const res = await fetch("/api/notifications", {
+      method,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({
+        id,
+        all: action === "readAll",
+      }),
     });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-    return await this.getState();
-  },
 
-  async verifyEmail(email: string): Promise<AppState> {
-    const res = await fetch("/api/profile/verify-email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-    return await this.getState();
-  },
-
-  async getSnapshotCSV(): Promise<string> {
-    const res = await fetch("/api/snapshot", { method: "POST" });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-    return body.csv ?? "";
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Notifications failed");
+    this.saveLocal(data as AppState);
+    return data as AppState;
   },
 
   async updateNotificationPreferences(prefs: NotificationPreferences): Promise<AppState> {
@@ -170,8 +81,40 @@ export const EchoAPI = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prefs }),
     });
-    const body = await res.json().catch(() => ({}));
-    mustOk(res, body);
-    return await this.getState();
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Preferences update failed");
+    this.saveLocal(data as AppState);
+    return data as AppState;
+  },
+
+  async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
+    const res = await fetch("/api/profile", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Profile update failed");
+    this.saveLocal(data as AppState);
+    return data as AppState;
+  },
+
+  async verifyEmail(email: string): Promise<AppState> {
+    const res = await fetch("/api/profile/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Email verify failed");
+    this.saveLocal(data as AppState);
+    return data as AppState;
+  },
+
+  async getSnapshotCSV(): Promise<string> {
+    const res = await fetch("/api/snapshot", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || data?.message || "Snapshot failed");
+    return String(data.csv ?? "");
   },
 };
