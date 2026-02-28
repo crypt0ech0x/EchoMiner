@@ -63,8 +63,10 @@ export default function EchoMinerApp() {
   }, [state?.session?.isActive]);
 
   const sessionEarnings = useMemo(() => {
-    // your MineTab might use this; keep it safe
-    return state?.session?.sessionMined ?? 0;
+     if (!state?.session?.isActive) return 0;
+  // We don’t have sessionMined in your types.ts, so use total mined delta if you want,
+  // or just show 0 here and rely on MineTab showing state.user.totalMined.
+    return 0;
   }, [state]);
 
   const effectiveRatePerHr = useMemo(() => {
