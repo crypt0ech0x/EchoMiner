@@ -237,17 +237,23 @@ export const EchoAPI = {
    * Start a session server-side, then re-pull /api/state.
    */
   async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
-    const baseRatePerHr = safeNum(payload?.baseRatePerHr, 1);
-    const multiplier = safeNum(payload?.multiplier, 1);
+  const res = await fetch("/api/mining/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      baseRatePerHr: payload?.baseRatePerHr ?? 1,
+      multiplier: payload?.multiplier ?? 1,
+    }),
+  });
 
-    await fetchJson("/api/mining/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ baseRatePerHr, multiplier }),
-    });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    throw new Error(err?.error || err?.message || "Failed to start session");
+  }
 
-    return await this.getState();
-  },
+  // IMPORTANT: after starting, immediately refetch /api/state so UI uses server truth
+  return await this.getState();
+}
 
   async activateAdBoost(): Promise<AppState> {
     await fetchJson("/api/boost/activate", { method: "POST" });
