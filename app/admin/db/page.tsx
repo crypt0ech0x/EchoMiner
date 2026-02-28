@@ -1,246 +1,192 @@
 // app/admin/db/page.tsx
-import { prisma } from "@/lib/prisma";
+"use client";
 
-// Simple protection:
-// Set ADMIN_KEY in Vercel env vars, then visit: /admin/db?key=YOUR_ADMIN_KEY
-export default async function AdminDbPage({
-  searchParams,
-}: {
-  searchParams: { key?: string };
-}) {
-  const required = process.env.ADMIN_KEY;
+import React, { useEffect, useMemo, useState } from "react";
 
-  if (required && searchParams.key !== required) {
-    return (
-      <div style={{ padding: 24, fontFamily: "system-ui" }}>
-        <h1 style={{ fontSize: 20, fontWeight: 800 }}>Unauthorized</h1>
-        <p style={{ marginTop: 8 }}>
-          Add <code>?key=...</code> to the URL (must match <code>ADMIN_KEY</code>).
-        </p>
-      </div>
-    );
+type DbPayload = {
+  ok: boolean;
+  tables: Record<string, any[]>;
+};
+
+function fmt(v: any) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (v instanceof Date) return v.toISOString();
+  // handle Prisma dates serialized as strings
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function isLikelyDateString(s: string) {
+  return /^\d{4}-\d{2}-\d{2}T/.test(s);
+}
+
+function prettyCell(v: any) {
+  if (typeof v === "string" && isLikelyDateString(v)) {
+    const d = new Date(v);
+    return isNaN(d.getTime()) ? v : d.toLocaleString();
+  }
+  return fmt(v);
+}
+
+export default function AdminDbPage() {
+  const [data, setData] = useState<DbPayload | null>(null);
+  const [active, setActive] = useState<string>("users");
+  const [q, setQ] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/admin/db", { method: "GET" });
+      if (!res.ok) {
+        // Basic auth will prompt automatically in most browsers once it gets 401
+        throw new Error(`Request failed (${res.status})`);
+      }
+      const json = (await res.json()) as DbPayload;
+      if (!json?.ok) throw new Error("Bad response");
+      setData(json);
+      const keys = Object.keys(json.tables ?? {});
+      if (keys.length && !keys.includes(active)) setActive(keys[0]);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  // Pull a little bit of data from each table (customize as you like)
-  const [
-    userCount,
-    walletCount,
-    miningSessionCount,
-    miningHistoryCount,
-    sessionCount,
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    users,
-    wallets,
-    miningSessions,
-    miningHistory,
-    sessions,
-  ] = await Promise.all([
-    prisma.user.count(),
-    prisma.wallet.count(),
-    prisma.miningSession.count(),
-    prisma.miningHistory.count(),
-    prisma.session.count(),
+  const tableNames = useMemo(() => Object.keys(data?.tables ?? {}), [data]);
+  const rows = useMemo(() => (data?.tables?.[active] ?? []), [data, active]);
 
-    prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 25,
-      include: { wallet: true, miningSession: true },
-    }),
-    prisma.wallet.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
-    prisma.miningSession.findMany({ orderBy: { updatedAt: "desc" }, take: 25 }),
-    prisma.miningHistory.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
-    prisma.session.findMany({ orderBy: { createdAt: "desc" }, take: 25 }),
-  ]);
+  const filtered = useMemo(() => {
+    if (!q.trim()) return rows;
+    const needle = q.toLowerCase();
+    return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(needle));
+  }, [rows, q]);
+
+  const columns = useMemo(() => {
+    const first = filtered[0] ?? rows[0];
+    if (!first) return [];
+    return Object.keys(first);
+  }, [filtered, rows]);
 
   return (
-    <div style={{ padding: 24, fontFamily: "system-ui" }}>
-      <h1 style={{ fontSize: 24, fontWeight: 900, marginBottom: 12 }}>DB Admin</h1>
+    <div className="min-h-screen bg-[#050816] text-white">
+      <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-3xl font-black tracking-tight">Admin • Database</h1>
+          <p className="text-white/50 text-sm">
+            Read-only view of latest rows (limit 200 per table).
+          </p>
+        </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        <Badge label="Users" value={userCount} />
-        <Badge label="Wallets" value={walletCount} />
-        <Badge label="MiningSession" value={miningSessionCount} />
-        <Badge label="MiningHistory" value={miningHistoryCount} />
-        <Badge label="Sessions" value={sessionCount} />
-      </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={load}
+            className="h-10 px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-bold"
+          >
+            Refresh
+          </button>
 
-      <Section title="Wallets (latest 25)">
-        <Table
-          columns={["createdAt", "address", "verified", "verifiedAt", "userId"]}
-          rows={wallets.map((w) => ({
-            createdAt: fmt(w.createdAt),
-            address: w.address,
-            verified: String(w.verified),
-            verifiedAt: w.verifiedAt ? fmt(w.verifiedAt) : "",
-            userId: w.userId ?? "",
-          }))}
-        />
-      </Section>
+          <div className="flex-1 min-w-[240px]">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search in current table…"
+              className="w-full h-10 px-4 rounded-xl bg-white/5 border border-white/10 outline-none text-sm"
+            />
+          </div>
+        </div>
 
-      <Section title="Users (latest 25)">
-        <Table
-          columns={["createdAt", "id", "email", "totalMinedEcho", "walletAddress", "walletVerified"]}
-          rows={users.map((u) => ({
-            createdAt: fmt(u.createdAt),
-            id: u.id,
-            email: u.email ?? "",
-            totalMinedEcho: String(u.totalMinedEcho ?? 0),
-            walletAddress: u.wallet?.address ?? "",
-            walletVerified: String(u.wallet?.verified ?? false),
-          }))}
-        />
-      </Section>
+        {loading && (
+          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 animate-pulse">
+            Loading…
+          </div>
+        )}
 
-      <Section title="MiningSession (latest 25)">
-        <Table
-          columns={[
-            "updatedAt",
-            "userId",
-            "isActive",
-            "startedAt",
-            "lastAccruedAt",
-            "baseRatePerHr",
-            "multiplier",
-            "sessionMined",
-          ]}
-          rows={miningSessions.map((s) => ({
-            updatedAt: fmt(s.updatedAt),
-            userId: s.userId,
-            isActive: String(s.isActive),
-            startedAt: s.startedAt ? fmt(s.startedAt) : "",
-            lastAccruedAt: s.lastAccruedAt ? fmt(s.lastAccruedAt) : "",
-            baseRatePerHr: String(s.baseRatePerHr),
-            multiplier: String(s.multiplier),
-            sessionMined: String(s.sessionMined),
-          }))}
-        />
-      </Section>
+        {err && (
+          <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-200">
+            {err}
+          </div>
+        )}
 
-      <Section title="MiningHistory (latest 25)">
-        <Table
-          columns={["createdAt", "userId", "startedAt", "endedAt", "baseRatePerHr", "multiplier", "totalMined"]}
-          rows={miningHistory.map((h) => ({
-            createdAt: fmt(h.createdAt),
-            userId: h.userId,
-            startedAt: fmt(h.startedAt),
-            endedAt: fmt(h.endedAt),
-            baseRatePerHr: String(h.baseRatePerHr),
-            multiplier: String(h.multiplier),
-            totalMined: String(h.totalMined),
-          }))}
-        />
-      </Section>
+        {!!tableNames.length && (
+          <div className="flex flex-wrap gap-2">
+            {tableNames.map((name) => {
+              const on = name === active;
+              return (
+                <button
+                  key={name}
+                  onClick={() => setActive(name)}
+                  className={`h-9 px-3 rounded-xl border text-xs font-black uppercase tracking-wider ${
+                    on
+                      ? "bg-teal-400/20 border-teal-400/30 text-teal-200"
+                      : "bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  {name} <span className="opacity-60">({(data?.tables?.[name] ?? []).length})</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-      <Section title="Sessions (latest 25)">
-        <Table
-          columns={["createdAt", "id", "userId", "expiresAt", "revokedAt"]}
-          rows={sessions.map((s) => ({
-            createdAt: fmt(s.createdAt),
-            id: s.id,
-            userId: s.userId,
-            expiresAt: fmt(s.expiresAt),
-            revokedAt: s.revokedAt ? fmt(s.revokedAt) : "",
-          }))}
-        />
-      </Section>
+        <div className="rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
+          <div className="px-5 py-4 flex items-center justify-between border-b border-white/10">
+            <div className="font-black tracking-tight">{active}</div>
+            <div className="text-xs text-white/50">
+              Showing {filtered.length} row(s)
+            </div>
+          </div>
 
-      <p style={{ marginTop: 24, opacity: 0.7, fontSize: 12 }}>
-        Tip: remove this page or protect it more strongly before going public.
-      </p>
-    </div>
-  );
-}
-
-function Badge({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      style={{
-        padding: "10px 12px",
-        border: "1px solid rgba(255,255,255,0.12)",
-        borderRadius: 12,
-        background: "rgba(255,255,255,0.04)",
-        color: "white",
-        minWidth: 140,
-      }}
-    >
-      <div style={{ fontSize: 12, opacity: 0.7, fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 900 }}>{value}</div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginTop: 18 }}>
-      <h2 style={{ fontSize: 16, fontWeight: 900, marginBottom: 8 }}>{title}</h2>
-      {children}
-    </div>
-  );
-}
-
-function Table({
-  columns,
-  rows,
-}: {
-  columns: string[];
-  rows: Array<Record<string, string>>;
-}) {
-  return (
-    <div style={{ overflowX: "auto", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12 }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 800 }}>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th
-                key={c}
-                style={{
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  fontSize: 12,
-                  opacity: 0.8,
-                  borderBottom: "1px solid rgba(255,255,255,0.12)",
-                  background: "rgba(255,255,255,0.04)",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr>
-              <td style={{ padding: 12, opacity: 0.7 }} colSpan={columns.length}>
-                No rows yet.
-              </td>
-            </tr>
+          {filtered.length === 0 ? (
+            <div className="p-6 text-white/50">No rows.</div>
           ) : (
-            rows.map((r, idx) => (
-              <tr key={idx}>
-                {columns.map((c) => (
-                  <td
-                    key={c}
-                    style={{
-                      padding: "10px 12px",
-                      borderBottom: "1px solid rgba(255,255,255,0.08)",
-                      fontSize: 12,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {r[c] ?? ""}
-                  </td>
-                ))}
-              </tr>
-            ))
+            <div className="overflow-auto">
+              <table className="min-w-full text-sm">
+                <thead className="sticky top-0 bg-[#060a1b]">
+                  <tr>
+                    {columns.map((c) => (
+                      <th
+                        key={c}
+                        className="text-left px-4 py-3 text-xs font-black uppercase tracking-wider text-white/50 border-b border-white/10"
+                      >
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r, idx) => (
+                    <tr key={idx} className="odd:bg-white/[0.02]">
+                      {columns.map((c) => (
+                        <td key={c} className="px-4 py-3 border-b border-white/5 text-white/80">
+                          <div className="max-w-[420px] truncate">
+                            {prettyCell(r?.[c])}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-        </tbody>
-      </table>
+        </div>
+
+        <div className="text-xs text-white/40">
+          Tip: If you want “pretty” nested objects (like user.wallet), we can render expandable rows.
+        </div>
+      </div>
     </div>
   );
-}
-
-function fmt(d: Date) {
-  // nice-ish readable
-  return new Date(d).toISOString().replace("T", " ").replace("Z", "Z");
 }
