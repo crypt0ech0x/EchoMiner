@@ -11,8 +11,6 @@ function n(x: any) {
 
 export async function GET() {
   try {
-    // NOTE: This assumes you have a Purchase model.
-    // If you DON’T yet, keep the purchaseSum part as 0 for now (see note below).
     const users = await prisma.user.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -21,28 +19,19 @@ export async function GET() {
           orderBy: { createdAt: "desc" },
           take: 1,
         },
-        // If you add Purchase model:
-        // purchases: {
-          // select: { amountEcho: true, createdAt: true },
-        // },
-      } as any,
+      },
+      take: 500,
     });
 
-    const rows = users.map((u: any) => {
-      const totalPurchasedEcho =
-        Array.isArray(u.purchases) ? u.purchases.reduce((acc: number, p: any) => acc + n(p.amountEcho), 0) : 0;
-
+    const rows = users.map((u) => {
       const totalMinedEcho = n(u.totalMinedEcho);
-      const totalEcho = totalMinedEcho + totalPurchasedEcho;
 
       return {
         userId: u.id,
-        createdAt: u.createdAt,
         walletAddress: u.wallet?.address ?? null,
         walletVerified: !!u.wallet?.verified,
-        totalPurchasedEcho,
         totalMinedEcho,
-        totalEcho,
+        totalEcho: totalMinedEcho, // same for now
         mostRecentMiningSessionAt: u.miningHistory?.[0]?.createdAt ?? null,
       };
     });
@@ -50,6 +39,9 @@ export async function GET() {
     return NextResponse.json({ ok: true, rows });
   } catch (err) {
     console.error("admin/overview error:", err);
-    return NextResponse.json({ ok: false, error: "Request failed" }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: "Admin overview failed" },
+      { status: 500 }
+    );
   }
 }
