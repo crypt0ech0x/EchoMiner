@@ -1,4 +1,3 @@
-// app/api/store/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromSessionCookie } from "@/lib/auth";
@@ -6,70 +5,54 @@ import { getUserFromSessionCookie } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Simple “catalog” for now (match your StoreTab ids)
-const CATALOG: Record<string, { echoAmount: number; priceCents?: number; currency?: string }> = {
-  explorer_echo: { echoAmount: 5, priceCents: 499, currency: "USD" },
-  // add more items here
-};
+function json(data: any, status = 200) {
+  return NextResponse.json(data, { status });
+}
 
 export async function POST(req: NextRequest) {
   try {
     const user = await getUserFromSessionCookie();
-    if (!user) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+    if (!user) return json({ ok: false, error: "Not logged in" }, 401);
 
-    const { sessionId, itemId } = await req.json();
+    const { sessionId, itemId, echoAmount } = await req.json();
 
-    // if your frontend only sends sessionId, you can choose an itemId fallback
-    const resolvedItemId = String(itemId ?? "explorer_echo");
-    const meta = CATALOG[resolvedItemId] ?? { echoAmount: 0 };
+    const providerRef = String(sessionId ?? "");
+    const safeItemId = String(itemId ?? "unknown");
+    const amount = Number(echoAmount ?? 0);
 
-    const providerSessionId = String(sessionId ?? "");
+    if (!providerRef) return json({ ok: false, error: "Missing sessionId" }, 400);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return json({ ok: false, error: "Invalid echoAmount" }, 400);
+    }
 
-    const result = await prisma.$transaction(async (tx) => {
-      // idempotent: don’t double-credit if webhook replays
-      const existing = providerSessionId
-        ? await tx.purchase.findUnique({ where: { providerSessionId } })
-        : null;
+    // Idempotent: if this providerRef already processed, do nothing
+    const existing = await prisma.purchase.findUnique({
+      where: { providerRef },
+      select: { id: true },
+    });
+    if (existing) return json({ ok: true, alreadyProcessed: true });
 
-      if (!existing) {
-        await tx.purchase.create({
-          data: {
-            userId: user.id,
-            itemId: resolvedItemId,
-            echoAmount: meta.echoAmount,
-            priceCents: meta.priceCents ?? null,
-            currency: meta.currency ?? null,
-            providerSessionId: providerSessionId || null,
-            status: "paid",
-          },
-        });
-
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            totalPurchasedEcho: { increment: meta.echoAmount },
-          },
-        });
-      }
-
-      const fresh = await tx.user.findUnique({
-        where: { id: user.id },
-        select: { totalMinedEcho: true, totalPurchasedEcho: true },
+    await prisma.$transaction(async (tx) => {
+      await tx.purchase.create({
+        data: {
+          userId: user.id,
+          itemId: safeItemId,
+          echoAmount: amount,
+          provider: "stripe",
+          providerRef,
+          status: "succeeded",
+        },
       });
 
-      return fresh;
+      await tx.user.update({
+        where: { id: user.id },
+        data: { totalPurchasedEcho: { increment: amount } },
+      });
     });
 
-    return NextResponse.json({
-      ok: true,
-      totals: {
-        mined: result?.totalMinedEcho ?? 0,
-        purchased: result?.totalPurchasedEcho ?? 0,
-        total: (result?.totalMinedEcho ?? 0) + (result?.totalPurchasedEcho ?? 0),
-      },
-    });
+    return json({ ok: true });
   } catch (err) {
     console.error("store/webhook error:", err);
-    return NextResponse.json({ ok: false, error: "Webhook failed" }, { status: 500 });
+    return json({ ok: false, error: "Webhook failed" }, 500);
   }
 }
