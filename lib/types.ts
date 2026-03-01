@@ -57,26 +57,40 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
-export type SessionStatus = "active" | "ended" | "settled";
-
+/**
+ * IMPORTANT:
+ * Your server truth is:
+ * - startedAt (Date)
+ * - lastAccruedAt (Date)
+ * - baseRatePerHr (number)
+ * - multiplier (number)
+ * - sessionMined (number)
+ *
+ * Your UI expects legacy fields:
+ * - startTime/endTime (ms)
+ * - baseRate/effectiveRate (ECHO per second)
+ */
 export interface MiningSession {
   id: string;
+
   isActive: boolean;
+
+  // Legacy UI fields (ms)
   startTime: number | null;
   endTime: number | null;
 
-  // UI legacy fields (your MineTab uses these)
-  baseRate: number; // ECHO per second
+  // Legacy UI fields (rates are PER SECOND in the UI)
+  baseRate: number;
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number; // ECHO per second
-  status: SessionStatus;
+  effectiveRate: number;
 
-  // Added so UI can show server truth without guessing
-  sessionMined?: number; // ECHO mined so far in this session
-  baseRatePerHr?: number;
-  multiplier?: number;
+  status: "active" | "ended" | "settled";
+
+  // Server-driven extras (added)
+  sessionMined?: number; // total earned this session (server truth)
+  lastAccruedAt?: number | string | null; // ms or ISO string (depending on your mapper)
 }
 
 export interface ActiveBoost {
@@ -115,28 +129,29 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-export type WalletState = {
+// New canonical wallet block (what /api/state returns)
+export interface WalletState {
   address: string | null;
   verified: boolean;
   verifiedAt: string | null; // ISO string or null
-};
+}
 
 export interface AppState {
-  // ✅ NEW: matches /api/state server response expectations
+  // NEW: server state
+  ok?: boolean;
   authed: boolean;
   wallet: WalletState;
 
-  // Existing app shape used throughout your UI
+  // Existing app state (keep so UI doesn't explode)
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
-
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // legacy fields you used earlier (keep them so old code doesn’t crash)
+  // Keep old wallet fields for backward-compat
   walletAddress: string | null;
   walletVerifiedAt: number | null;
   currentNonce: string | null;
