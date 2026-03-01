@@ -15,7 +15,7 @@ type Row = {
 };
 
 async function getOverview(): Promise<Row[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/admin/overview`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/app/api/admin/overview`, {
     cache: "no-store",
   });
 
