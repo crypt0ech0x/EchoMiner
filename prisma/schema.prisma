@@ -1,17 +1,16 @@
 // prisma/schema.prisma
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 datasource db {
   provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
 }
 
 // ==============================
 // USER
 // ==============================
-
 model User {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -19,21 +18,23 @@ model User {
 
   email String? @unique
 
-  // Total mined across all sessions (server truth)
-  totalMinedEcho Float @default(0)
+  // Server-truth totals
+  totalMinedEcho     Float @default(0)
+  totalPurchasedEcho Float @default(0)
 
   wallet        Wallet?
   miningSession MiningSession?
   miningHistory MiningHistory[]
   sessions      Session[]
+  purchases     Purchase[]
 
   @@index([totalMinedEcho])
+  @@index([totalPurchasedEcho])
 }
 
 // ==============================
 // WALLET (1 per user)
 // ==============================
-
 model Wallet {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -48,9 +49,8 @@ model Wallet {
 }
 
 // ==============================
-// WALLET NONCE (for signature challenge)
+// WALLET NONCE (signature challenge)
 // ==============================
-
 model WalletNonce {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -65,7 +65,6 @@ model WalletNonce {
 // ==============================
 // ACTIVE MINING SESSION (1 per user)
 // ==============================
-
 model MiningSession {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -90,7 +89,6 @@ model MiningSession {
 // ==============================
 // MINING HISTORY (AUDIT LOG)
 // ==============================
-
 model MiningHistory {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
@@ -109,12 +107,45 @@ model MiningHistory {
   @@index([createdAt])
 }
 
+// ==============================
+// PURCHASES (STORE)
+// ==============================
+model Purchase {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // identify what was bought
+  itemId String
+
+  // store totals in a consistent unit (echo)
+  echoAmount Float @default(0)
+
+  // optional money metadata
+  currency   String? 
+  priceCents Int?
+
+  // stripe metadata (or mock session id)
+  providerSessionId String? @unique
+  status            String  @default("paid")
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([itemId])
+}
+
+// ==============================
+// AUTH SESSION COOKIE
+// ==============================
 model Session {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
   expiresAt DateTime
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   revokedAt DateTime?
 
