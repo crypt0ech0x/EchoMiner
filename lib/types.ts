@@ -35,14 +35,7 @@ export interface NotificationPreferences {
 export interface UserStats {
   id: string;
   username: string;
-
-  /**
-   * IMPORTANT:
-   * In your current UI, MineTab displays state.user.balance.
-   * We will map DB totalMinedEcho -> this "balance" in api.ts.
-   */
   balance: number;
-
   totalMined: number;
   referrals: number;
   joinedDate: number;
@@ -68,26 +61,22 @@ export interface MiningSession {
   id: string;
   isActive: boolean;
 
-  // UI fields (your MineTab uses these)
-  startTime: number | null;
-  endTime: number | null;
-
-  baseRate: number;
+  // UI fields
+  startTime: number | null; // ms
+  endTime: number | null;   // ms
+  baseRate: number;         // per second
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-
-  // effectiveRate is used by MineTab for E/H and E/s
-  effectiveRate: number;
-
+  effectiveRate: number;    // per second
   status: "active" | "ended" | "settled";
 
-  /**
-   * NEW:
-   * server-truth amount mined in the current session (from DB),
-   * used to display earnings instead of local math.
-   */
-  sessionMined: number;
+  // Server-backed extras (so MineTab can show real mined)
+  sessionMined?: number;    // total earned during this session (server truth)
+  startedAt?: string | null;
+  lastAccruedAt?: string | null;
+  baseRatePerHr?: number;
+  multiplier?: number;
 }
 
 export interface ActiveBoost {
@@ -126,31 +115,28 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-/**
- * NEW: what server returns (or what we keep in AppState after mapping)
- */
-export interface WalletInfo {
+export type WalletInfo = {
   address: string | null;
   verified: boolean;
-  verifiedAt: string | null;
-}
+  verifiedAt: string | null; // ISO string or null
+};
 
 export interface AppState {
-  // NEW (server-auth truth)
+  // NEW (matches server truth)
   authed: boolean;
   wallet: WalletInfo;
 
+  // existing UI shape
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
-
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // Back-compat (some older code may still reference these)
+  // legacy fields used by some UI bits (keep them so you don’t crash)
   walletAddress: string | null;
-  walletVerifiedAt: number | null;
+  walletVerifiedAt: number | null; // ms
   currentNonce: string | null;
 }
