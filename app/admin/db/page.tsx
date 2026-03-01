@@ -1,190 +1,116 @@
 // app/admin/db/page.tsx
-"use client";
+import { prisma } from "@/lib/prisma";
 
-import React, { useEffect, useMemo, useState } from "react";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type DbPayload = {
-  ok: boolean;
-  tables: Record<string, any[]>;
-};
-
-function fmt(v: any) {
-  if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
-  if (typeof v === "boolean") return v ? "true" : "false";
-  if (v instanceof Date) return v.toISOString();
-  // handle Prisma dates serialized as strings
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
+function fmt(n: number) {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function isLikelyDateString(s: string) {
-  return /^\d{4}-\d{2}-\d{2}T/.test(s);
-}
+export default async function AdminDbPage() {
+  // You can add auth gating later (admin-only).
+  const users = await prisma.user.findMany({
+    include: {
+      wallet: true,
+      purchases: { select: { echoAmount: true } },
+      miningHistory: {
+        select: { startedAt: true, endedAt: true },
+        orderBy: { startedAt: "asc" },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
 
-function prettyCell(v: any) {
-  if (typeof v === "string" && isLikelyDateString(v)) {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? v : d.toLocaleString();
-  }
-  return fmt(v);
-}
+  const rows = users.map((u) => {
+    const totalPurchased =
+      u.totalPurchasedEcho ??
+      u.purchases.reduce((sum, p) => sum + (p.echoAmount ?? 0), 0);
 
-export default function AdminDbPage() {
-  const [data, setData] = useState<DbPayload | null>(null);
-  const [active, setActive] = useState<string>("users");
-  const [q, setQ] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+    const totalMined = u.totalMinedEcho ?? 0;
+    const total = totalMined + totalPurchased;
 
-  async function load() {
-    setLoading(true);
-    setErr(null);
-    try {
-      const res = await fetch("/api/admin/db", { method: "GET" });
-      if (!res.ok) {
-        // Basic auth will prompt automatically in most browsers once it gets 401
-        throw new Error(`Request failed (${res.status})`);
-      }
-      const json = (await res.json()) as DbPayload;
-      if (!json?.ok) throw new Error("Bad response");
-      setData(json);
-      const keys = Object.keys(json.tables ?? {});
-      if (keys.length && !keys.includes(active)) setActive(keys[0]);
-    } catch (e: any) {
-      setErr(e?.message ?? "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }
+    const firstMining = u.miningHistory.length ? u.miningHistory[0].startedAt : null;
+    const lastMining = u.miningHistory.length ? u.miningHistory[u.miningHistory.length - 1].endedAt : null;
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const tableNames = useMemo(() => Object.keys(data?.tables ?? {}), [data]);
-  const rows = useMemo(() => (data?.tables?.[active] ?? []), [data, active]);
-
-  const filtered = useMemo(() => {
-    if (!q.trim()) return rows;
-    const needle = q.toLowerCase();
-    return rows.filter((r) => JSON.stringify(r).toLowerCase().includes(needle));
-  }, [rows, q]);
-
-  const columns = useMemo(() => {
-    const first = filtered[0] ?? rows[0];
-    if (!first) return [];
-    return Object.keys(first);
-  }, [filtered, rows]);
+    return {
+      id: u.id,
+      wallet: u.wallet?.address ?? "—",
+      mined: totalMined,
+      purchased: totalPurchased,
+      total,
+      firstMining,
+      lastMining,
+    };
+  });
 
   return (
-    <div className="min-h-screen bg-[#050816] text-white">
-      <div className="mx-auto max-w-6xl px-6 py-10 space-y-6">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-black tracking-tight">Admin • Database</h1>
-          <p className="text-white/50 text-sm">
-            Read-only view of latest rows (limit 200 per table).
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={load}
-            className="h-10 px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm font-bold"
-          >
-            Refresh
-          </button>
-
-          <div className="flex-1 min-w-[240px]">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search in current table…"
-              className="w-full h-10 px-4 rounded-xl bg-white/5 border border-white/10 outline-none text-sm"
-            />
+    <div className="min-h-screen bg-[#050816] text-white p-6">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black tracking-tight">Admin • Database</h1>
+            <p className="text-white/50 text-sm">
+              Wallet + totals (mined/purchased/total). Showing newest 200 users.
+            </p>
+          </div>
+          <div className="text-xs text-white/40">
+            Tip: bookmark <span className="font-mono text-white/70">/admin/db</span>
           </div>
         </div>
 
-        {loading && (
-          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 animate-pulse">
-            Loading…
-          </div>
-        )}
-
-        {err && (
-          <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-200">
-            {err}
-          </div>
-        )}
-
-        {!!tableNames.length && (
-          <div className="flex flex-wrap gap-2">
-            {tableNames.map((name) => {
-              const on = name === active;
-              return (
-                <button
-                  key={name}
-                  onClick={() => setActive(name)}
-                  className={`h-9 px-3 rounded-xl border text-xs font-black uppercase tracking-wider ${
-                    on
-                      ? "bg-teal-400/20 border-teal-400/30 text-teal-200"
-                      : "bg-white/5 border-white/10 text-white/60 hover:text-white hover:bg-white/10"
-                  }`}
-                >
-                  {name} <span className="opacity-60">({(data?.tables?.[name] ?? []).length})</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="rounded-2xl bg-white/5 border border-white/10 overflow-hidden">
-          <div className="px-5 py-4 flex items-center justify-between border-b border-white/10">
-            <div className="font-black tracking-tight">{active}</div>
-            <div className="text-xs text-white/50">
-              Showing {filtered.length} row(s)
-            </div>
-          </div>
-
-          {filtered.length === 0 ? (
-            <div className="p-6 text-white/50">No rows.</div>
-          ) : (
-            <div className="overflow-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 bg-[#060a1b]">
-                  <tr>
-                    {columns.map((c) => (
-                      <th
-                        key={c}
-                        className="text-left px-4 py-3 text-xs font-black uppercase tracking-wider text-white/50 border-b border-white/10"
-                      >
-                        {c}
-                      </th>
-                    ))}
+        <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-white/5 text-white/60">
+                <tr>
+                  <th className="text-left p-4 font-bold">Wallet</th>
+                  <th className="text-right p-4 font-bold">Purchased</th>
+                  <th className="text-right p-4 font-bold">Mined</th>
+                  <th className="text-right p-4 font-bold">Total</th>
+                  <th className="text-left p-4 font-bold">First Mining</th>
+                  <th className="text-left p-4 font-bold">Most Recent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="border-t border-white/10 hover:bg-white/[0.06]">
+                    <td className="p-4 font-mono text-xs text-white/80">
+                      {r.wallet}
+                    </td>
+                    <td className="p-4 text-right font-black text-emerald-300 tabular-nums">
+                      {fmt(r.purchased)}
+                    </td>
+                    <td className="p-4 text-right font-black text-sky-300 tabular-nums">
+                      {fmt(r.mined)}
+                    </td>
+                    <td className="p-4 text-right font-black text-white tabular-nums">
+                      {fmt(r.total)}
+                    </td>
+                    <td className="p-4 text-white/60">
+                      {r.firstMining ? new Date(r.firstMining).toLocaleString() : "—"}
+                    </td>
+                    <td className="p-4 text-white/60">
+                      {r.lastMining ? new Date(r.lastMining).toLocaleString() : "—"}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((r, idx) => (
-                    <tr key={idx} className="odd:bg-white/[0.02]">
-                      {columns.map((c) => (
-                        <td key={c} className="px-4 py-3 border-b border-white/5 text-white/80">
-                          <div className="max-w-[420px] truncate">
-                            {prettyCell(r?.[c])}
-                          </div>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                ))}
+                {!rows.length && (
+                  <tr>
+                    <td className="p-6 text-white/50" colSpan={6}>
+                      No users yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="text-xs text-white/40">
-          Tip: If you want “pretty” nested objects (like user.wallet), we can render expandable rows.
+          Totals logic:
+          <span className="font-mono text-white/70"> total = totalMinedEcho + totalPurchasedEcho</span>
         </div>
       </div>
     </div>
