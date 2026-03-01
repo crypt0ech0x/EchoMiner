@@ -1,11 +1,10 @@
 // lib/api.ts
-import {
-  AppState,
-  WalletState,
-  NotificationPreferences,
-  NotificationType,
-} from "./types";
+import { AppState, WalletState } from "./types";
 
+/**
+ * This app used to store everything client-side.
+ * Now the server is truth. We still keep a local cache to avoid UI flicker.
+ */
 type ApiState = {
   ok: boolean;
   authed: boolean;
@@ -27,74 +26,81 @@ type ApiState = {
   };
 };
 
-const STORAGE_KEY = "echo_miner_state_v1";
+function nowMs() {
+  return Date.now();
+}
 
-function loadLocal(): AppState | null {
-  if (typeof window === "undefined") return null;
+function safeJsonParse<T>(s: string | null): T | null {
+  if (!s) return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as AppState) : null;
+    return JSON.parse(s) as T;
   } catch {
     return null;
   }
 }
 
-function saveLocal(state: AppState) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore
-  }
-}
+/**
+ * Build a "full" AppState that keeps your older UI happy,
+ * while using the server response as truth.
+ */
+function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
+  const prefs =
+    prev?.user?.notificationPreferences ?? {
+      session_end: true,
+      streak_grace_warning: true,
+      boost_expired: true,
+      weekly_summary: true,
+      airdrop_announcement: true,
+    };
 
-async function fetchJson(url: string, init?: RequestInit) {
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      "Content-Type": "application/json",
-    },
-  });
+  const userId = prev?.user?.id ?? "local_user";
+  const username = prev?.user?.username ?? "Voyager";
+  const referralCode = prev?.user?.referralCode ?? "ECHO";
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${url} failed (${res.status}) ${text}`);
-  }
-  return res.json();
-}
+  const wallet: WalletState = {
+    address: api.wallet?.address ?? null,
+    verified: !!api.wallet?.verified,
+    verifiedAt: api.wallet?.verifiedAt ?? null,
+  };
 
-// Build a safe fallback state (so UI never crashes)
-function defaultAppState(prev?: AppState | null): AppState {
-  const now = Date.now();
+  // DB fields
+  const startedAtMs = api.session.startedAt ? new Date(api.session.startedAt).getTime() : null;
+  const durationMs = 3 * 60 * 60 * 1000; // 3 hours (matches your route)
+  const endTimeMs = startedAtMs ? startedAtMs + durationMs : null;
 
-  return {
-    authed: false,
-    wallet: { address: null, verified: false, verifiedAt: null },
+  const baseRatePerSec = (api.session.baseRatePerHr ?? 0) / 3600;
+  const multiplier = api.session.multiplier ?? 1;
+  const effectiveRatePerSec = baseRatePerSec * multiplier;
+
+  const sessionStatus: "active" | "ended" | "settled" = api.session.isActive ? "active" : "ended";
+
+  // IMPORTANT:
+  // - user.balance is used in MineTab for the big number
+  // - you can choose whether balance is "total mined" or something else
+  // Here we set balance to total mined (server truth).
+  const totalMined = api.user?.totalMinedEcho ?? 0;
+
+  const merged: AppState = {
+    ok: api.ok,
+    authed: api.authed,
+    wallet,
 
     user: {
-      id: prev?.user?.id ?? "guest",
-      username: prev?.user?.username ?? "Voyager",
-      balance: prev?.user?.balance ?? 0,
-      totalMined: prev?.user?.totalMined ?? 0,
+      id: userId,
+      username,
+      balance: totalMined,
+      totalMined: totalMined,
       referrals: prev?.user?.referrals ?? 0,
-      joinedDate: prev?.user?.joinedDate ?? now,
-      guest: prev?.user?.guest ?? true,
+      joinedDate: prev?.user?.joinedDate ?? nowMs(),
+      guest: prev?.user?.guest ?? !api.authed,
       riskScore: prev?.user?.riskScore ?? 0,
-      referralCode: prev?.user?.referralCode ?? "N/A",
+      referralCode,
       isAdmin: prev?.user?.isAdmin ?? false,
       priorityAirdrop: prev?.user?.priorityAirdrop ?? false,
       pfpUrl: prev?.user?.pfpUrl,
       email: prev?.user?.email,
       emailVerified: prev?.user?.emailVerified ?? false,
-      notificationPreferences:
-        prev?.user?.notificationPreferences ?? {
-          session_end: true,
-          streak_grace_warning: true,
-          boost_expired: true,
-          weekly_summary: true,
-          airdrop_announcement: true,
-        },
+      notificationPreferences: prefs,
     },
 
     streak: prev?.streak ?? {
@@ -104,17 +110,24 @@ function defaultAppState(prev?: AppState | null): AppState {
       graceEndsAt: null,
     },
 
-    session: prev?.session ?? {
-      id: "session",
-      isActive: false,
-      startTime: null,
-      endTime: null,
-      baseRate: 0,
-      streakMultiplier: 1,
-      boostMultiplier: 1,
-      purchaseMultiplier: 1,
-      effectiveRate: 0,
-      status: "ended",
+    session: {
+      id: prev?.session?.id ?? "session",
+      isActive: !!api.session.isActive,
+      startTime: startedAtMs,
+      endTime: endTimeMs,
+      baseRate: baseRatePerSec,
+      streakMultiplier: prev?.session?.streakMultiplier ?? 1,
+      boostMultiplier: prev?.session?.boostMultiplier ?? 1,
+      purchaseMultiplier: prev?.session?.purchaseMultiplier ?? 1,
+      effectiveRate: effectiveRatePerSec,
+      status: sessionStatus,
+
+      // server truth for display
+      sessionMined: api.session.sessionMined ?? 0,
+      startedAt: api.session.startedAt,
+      lastAccruedAt: api.session.lastAccruedAt,
+      baseRatePerHr: api.session.baseRatePerHr,
+      multiplier: api.session.multiplier,
     },
 
     activeBoosts: prev?.activeBoosts ?? [],
@@ -122,181 +135,112 @@ function defaultAppState(prev?: AppState | null): AppState {
     purchaseHistory: prev?.purchaseHistory ?? [],
     notifications: prev?.notifications ?? [],
 
-    walletAddress: prev?.walletAddress ?? null,
-    walletVerifiedAt: prev?.walletVerifiedAt ?? null,
-    currentNonce: prev?.currentNonce ?? null,
-  };
-}
-
-function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
-  const base = defaultAppState(prev);
-
-  const wallet: WalletState = {
-    address: api.wallet?.address ?? null,
-    verified: !!api.wallet?.verified,
-    verifiedAt: api.wallet?.verifiedAt ?? null,
-  };
-
-  const total = Number(api.user?.totalMinedEcho ?? 0);
-
-  const baseRatePerHr = Number(api.session?.baseRatePerHr ?? 0);
-  const multiplier = Number(api.session?.multiplier ?? 1);
-  const effectiveRatePerSec = (baseRatePerHr * multiplier) / 3600;
-
-  return {
-    ...base,
-
-    authed: !!api.authed,
-    wallet,
-
-    // keep UI happy
+    // legacy fields
     walletAddress: wallet.address,
     walletVerifiedAt: wallet.verifiedAt ? new Date(wallet.verifiedAt).getTime() : null,
-
-    // reflect DB truth
-    user: {
-      ...base.user,
-      totalMined: total,
-      // optional: keep balance tied to total mined if your UI expects it
-      balance: total,
-      guest: !api.authed,
-    },
-
-    // update “session” in a way MineTab can display
-    session: {
-      ...base.session,
-      isActive: !!api.session?.isActive,
-
-      // legacy values MineTab uses
-      baseRate: baseRatePerHr, // per-hour in this migration
-      effectiveRate: effectiveRatePerSec, // per-second (MineTab does *3600 to show /hr)
-      status: api.session?.isActive ? "active" : "ended",
-
-      // new DB fields
-      startedAt: api.session?.startedAt ?? null,
-      lastAccruedAt: api.session?.lastAccruedAt ?? null,
-      baseRatePerHr,
-      multiplier,
-      sessionMined: Number(api.session?.sessionMined ?? 0),
-    },
+    currentNonce: prev?.currentNonce ?? null,
   };
+
+  return merged;
 }
 
 export const EchoAPI = {
-  STORAGE_KEY,
+  STORAGE_KEY: "echo_miner_state_v1",
 
-  loadLocal,
-  saveLocal,
+  loadLocal(): AppState | null {
+    if (typeof window === "undefined") return null;
+    return safeJsonParse<AppState>(localStorage.getItem(this.STORAGE_KEY));
+  },
+
+  saveLocal(state: AppState) {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore
+    }
+  },
+
+  async fetchJson(url: string, init?: RequestInit) {
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      // try to extract error message
+      const text = await res.text().catch(() => "");
+      throw new Error(`getState failed (${res.status}) ${text ? `- ${text}` : ""}`.trim());
+    }
+
+    return res.json();
+  },
 
   async getState(): Promise<AppState> {
-    const prev = loadLocal();
-    const api = (await fetchJson("/api/state", { method: "GET" })) as ApiState;
+    const prev = this.loadLocal();
+
+    // /api/state supports GET (you added it)
+    const api = (await this.fetchJson("/api/state", { method: "GET" })) as ApiState;
+
     const app = apiToAppState(api, prev);
-    saveLocal(app);
+    this.saveLocal(app);
     return app;
   },
 
   async refreshState(): Promise<AppState> {
-    // server accrues mining + writes to DB
-    await fetchJson("/api/mining/refresh", { method: "POST" });
-    return this.getState();
+    const prev = this.loadLocal();
+
+    // Server accrues mining on refresh
+    const api = (await this.fetchJson("/api/mining/refresh", { method: "POST" })) as ApiState;
+
+    const app = apiToAppState(api, prev);
+    this.saveLocal(app);
+    return app;
   },
 
   async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
-    await fetchJson("/api/mining/start", {
+    const prev = this.loadLocal();
+
+    await this.fetchJson("/api/mining/start", {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
     });
-    return this.getState();
+
+    // After start, immediately re-fetch state so UI gets startedAt, etc.
+    const api = (await this.fetchJson("/api/state", { method: "GET" })) as ApiState;
+    const app = apiToAppState(api, prev);
+    this.saveLocal(app);
+    return app;
   },
 
+  // keep these as no-ops for now so your UI compiles
+  // (until you re-enable these routes server-side)
   async activateAdBoost(): Promise<AppState> {
-    // if you have a real endpoint, keep it; otherwise harmless no-op
-    try {
-      await fetchJson("/api/boost/activate", { method: "POST" });
-    } catch {
-      // ignore if not implemented yet
-    }
     return this.getState();
   },
-
-  async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
-    // if you have a real endpoint, keep it; otherwise just return state
-    try {
-      await fetchJson("/api/profile", { method: "PATCH", body: JSON.stringify(updates) });
-    } catch {
-      // ignore if not implemented yet
-    }
+  async updateProfile(): Promise<AppState> {
     return this.getState();
   },
-
-  async verifyEmail(email: string): Promise<AppState> {
-    try {
-      await fetchJson("/api/profile/verify-email", {
-        method: "POST",
-        body: JSON.stringify({ email }),
-      });
-    } catch {
-      // ignore if not implemented yet
-    }
+  async verifyEmail(): Promise<AppState> {
     return this.getState();
   },
-
-  async handleNotifications(action: "read" | "readAll" | "clear", id?: string): Promise<AppState> {
-    try {
-      await fetchJson("/api/notifications", {
-        method: action === "clear" ? "DELETE" : "PATCH",
-        body: JSON.stringify({ action, id }),
-      });
-    } catch {
-      // ignore if not implemented yet
-    }
+  async handleNotifications(): Promise<AppState> {
     return this.getState();
   },
-
-  async updateNotificationPreferences(prefs: NotificationPreferences): Promise<AppState> {
-    try {
-      await fetchJson("/api/notifications/preferences", {
-        method: "PATCH",
-        body: JSON.stringify({ prefs }),
-      });
-    } catch {
-      // ignore if not implemented yet
-    }
+  async updateNotificationPreferences(): Promise<AppState> {
     return this.getState();
   },
-
   async getSnapshotCSV(): Promise<string> {
-    // optional real endpoint
-    const res = await fetch("/api/snapshot", { method: "POST" });
-    if (!res.ok) throw new Error("snapshot failed");
-    const data = (await res.json()) as { csv?: string };
-    return data.csv ?? "";
+    return "id,totalMinedEcho\n";
   },
-
-  async createStripeSession(itemId: string): Promise<string> {
-    // optional real endpoint
-    const res = await fetch("/api/store/checkout", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ itemId }),
-    });
-    if (!res.ok) throw new Error("stripe checkout failed");
-    const data = (await res.json()) as { sessionId?: string };
-    if (!data.sessionId) throw new Error("missing sessionId");
-    return data.sessionId;
+  async createStripeSession(): Promise<string> {
+    return "dev_session";
   },
-
-  async handleStripeWebhook(sessionId: string): Promise<AppState> {
-    // optional real endpoint
-    try {
-      await fetchJson("/api/store/webhook", {
-        method: "POST",
-        body: JSON.stringify({ sessionId }),
-      });
-    } catch {
-      // ignore if not implemented yet
-    }
+  async handleStripeWebhook(): Promise<AppState> {
     return this.getState();
   },
 };
