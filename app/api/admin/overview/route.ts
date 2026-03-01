@@ -4,44 +4,52 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function n(x: any) {
+  const v = Number(x ?? 0);
+  return Number.isFinite(v) ? v : 0;
+}
+
 export async function GET() {
   try {
-    // Minimal fields you asked for
+    // NOTE: This assumes you have a Purchase model.
+    // If you DON’T yet, keep the purchaseSum part as 0 for now (see note below).
     const users = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
       include: {
         wallet: true,
-        purchases: true,
         miningHistory: {
-          select: { startedAt: true, endedAt: true },
-          orderBy: { startedAt: "asc" },
+          orderBy: { createdAt: "desc" },
+          take: 1,
         },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 500,
+        // If you add Purchase model:
+        purchases: {
+          select: { amountEcho: true, createdAt: true },
+        },
+      } as any,
     });
 
-    const rows = users.map((u) => {
-      const first = u.miningHistory[0]?.startedAt ?? null;
-      const last = u.miningHistory.length ? u.miningHistory[u.miningHistory.length - 1]?.endedAt : null;
+    const rows = users.map((u: any) => {
+      const totalPurchasedEcho =
+        Array.isArray(u.purchases) ? u.purchases.reduce((acc: number, p: any) => acc + n(p.amountEcho), 0) : 0;
 
-      const totalPurchasedEcho = u.totalPurchasedEcho ?? 0;
-      const totalMinedEcho = u.totalMinedEcho ?? 0;
+      const totalMinedEcho = n(u.totalMinedEcho);
+      const totalEcho = totalMinedEcho + totalPurchasedEcho;
 
       return {
         userId: u.id,
+        createdAt: u.createdAt,
         walletAddress: u.wallet?.address ?? null,
         walletVerified: !!u.wallet?.verified,
         totalPurchasedEcho,
         totalMinedEcho,
-        totalEcho: totalPurchasedEcho + totalMinedEcho,
-        firstMiningSession: first,
-        mostRecentMiningSession: last,
+        totalEcho,
+        mostRecentMiningSessionAt: u.miningHistory?.[0]?.createdAt ?? null,
       };
     });
 
     return NextResponse.json({ ok: true, rows });
   } catch (err) {
     console.error("admin/overview error:", err);
-    return NextResponse.json({ ok: false, error: "Admin overview failed" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "Request failed" }, { status: 500 });
   }
 }
