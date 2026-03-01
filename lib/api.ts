@@ -120,10 +120,9 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
   // Your UI uses per-second effectiveRate
   const effectiveRatePerSec = baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
 
-  // Your MineTab expects start/end time; your server uses a 3-hour session
-  const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-  const endTimeMs = startedAtMs ? startedAtMs + THREE_HOURS_MS : null;
-
+  // Your MineTab expects start/end time; your server uses a 24-hour session
+  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+  const endTimeMs = startedAtMs ? startedAtMs + TWENTY_FOUR_HOURS_MS : null;
   return {
     ...base,
 
