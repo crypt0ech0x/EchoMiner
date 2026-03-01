@@ -57,40 +57,29 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
-/**
- * IMPORTANT:
- * Your server truth is:
- * - startedAt (Date)
- * - lastAccruedAt (Date)
- * - baseRatePerHr (number)
- * - multiplier (number)
- * - sessionMined (number)
- *
- * Your UI expects legacy fields:
- * - startTime/endTime (ms)
- * - baseRate/effectiveRate (ECHO per second)
- */
+// ✅ Keep your legacy session shape so MineTab/ProfileDrawer keep compiling,
+// but ADD the server-driven fields we need for DB mining display.
 export interface MiningSession {
   id: string;
 
   isActive: boolean;
 
-  // Legacy UI fields (ms)
+  // legacy fields (some tabs use these)
   startTime: number | null;
   endTime: number | null;
-
-  // Legacy UI fields (rates are PER SECOND in the UI)
-  baseRate: number;
+  baseRate: number; // “base rate” used by old UI
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number;
-
+  effectiveRate: number; // per-second in your UI (MineTab uses effectiveRate * 3600 in places)
   status: "active" | "ended" | "settled";
 
-  // Server-driven extras (added)
-  sessionMined?: number; // total earned this session (server truth)
-  lastAccruedAt?: number | string | null; // ms or ISO string (depending on your mapper)
+  // ✅ NEW server-driven fields (from DB-backed mining)
+  startedAt?: string | null;
+  lastAccruedAt?: string | null;
+  baseRatePerHr?: number;
+  multiplier?: number;
+  sessionMined?: number; // the big one: DB session counter
 }
 
 export interface ActiveBoost {
@@ -129,20 +118,20 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-// New canonical wallet block (what /api/state returns)
+// ✅ Add these so your app stops “guessing”
 export interface WalletState {
   address: string | null;
   verified: boolean;
-  verifiedAt: string | null; // ISO string or null
+  verifiedAt: string | null;
 }
 
+// ✅ AppState becomes the single UI state object.
 export interface AppState {
-  // NEW: server state
-  ok?: boolean;
+  // ✅ new top-level auth state
   authed: boolean;
   wallet: WalletState;
 
-  // Existing app state (keep so UI doesn't explode)
+  // existing app state your UI expects
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
@@ -151,7 +140,7 @@ export interface AppState {
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // Keep old wallet fields for backward-compat
+  // legacy wallet fields some components still reference
   walletAddress: string | null;
   walletVerifiedAt: number | null;
   currentNonce: string | null;
