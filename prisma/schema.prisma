@@ -18,7 +18,7 @@ model User {
 
   email String? @unique
 
-  // Server-truth totals
+  // server truth
   totalMinedEcho     Float @default(0)
   totalPurchasedEcho Float @default(0)
 
@@ -115,25 +115,19 @@ model Purchase {
   createdAt DateTime @default(now())
 
   userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // identify what was bought
-  itemId String
+  // what was bought
+  itemId     String
+  echoAmount Float  @default(0)
 
-  // store totals in a consistent unit (echo)
-  echoAmount Float @default(0)
-
-  // optional money metadata
-  currency   String? 
-  priceCents Int?
-
-  // stripe metadata (or mock session id)
-  providerSessionId String? @unique
-  status            String  @default("paid")
+  // Stripe/session tracking (even if you’re simulating now)
+  provider        String  @default("stripe")
+  providerRef     String? @unique  // stripe session id, payment intent id, etc
+  status          String  @default("succeeded") // pending|succeeded|failed
 
   @@index([userId])
   @@index([createdAt])
-  @@index([itemId])
 }
 
 // ==============================
