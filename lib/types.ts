@@ -35,8 +35,8 @@ export interface NotificationPreferences {
 export interface UserStats {
   id: string;
   username: string;
-  balance: number; // used by MineTab for display
-  totalMined: number; // keep for existing UI
+  balance: number;
+  totalMined: number;
   referrals: number;
   joinedDate: number;
   guest: boolean;
@@ -57,35 +57,26 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
-/**
- * UI MiningSession shape (what MineTab expects)
- * We ALSO keep DB timestamps for smoother earnings display.
- */
+// ✅ Updated: includes optional server-backed fields
 export interface MiningSession {
   id: string;
   isActive: boolean;
 
-  // UI timers (ms)
+  // legacy UI fields (your MineTab uses these)
   startTime: number | null;
   endTime: number | null;
-
-  // Rates (per-second for effectiveRate)
-  baseRate: number; // per-second base rate
+  baseRate: number;
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number; // per-second
-
+  effectiveRate: number; // per-second in your UI math
   status: "active" | "ended" | "settled";
 
-  // --- NEW: server-truth fields (from DB) ---
-  sessionMined: number; // accrued amount this session
-  startedAt?: string | null; // ISO
-  lastAccruedAt?: string | null; // ISO
-
-  // optional to help debugging
-  baseRatePerHr?: number;
-  multiplier?: number;
+  // ✅ NEW server-backed fields
+  sessionMined: number; // server truth for current session mined
+  lastAccruedAt: number | null; // ms timestamp of last accrual
+  baseRatePerHr?: number; // from DB session
+  multiplier?: number; // from DB session
 }
 
 export interface ActiveBoost {
@@ -124,29 +115,29 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-export type WalletState = {
+// ✅ New wallet object (what /api/state returns)
+export interface WalletState {
   address: string | null;
   verified: boolean;
   verifiedAt: string | null;
-};
+}
 
+// ✅ AppState now includes server fields, but keeps your old ones too
 export interface AppState {
-  // --- NEW: returned by server (/api/state) ---
-  ok: boolean;
+  // server auth + wallet (your build errors were because these were missing)
   authed: boolean;
   wallet: WalletState;
 
-  // --- existing UI state ---
+  // existing app fields your UI expects
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
-
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // legacy wallet fields your components still reference (keep them)
+  // legacy wallet fields (kept so old UI code doesn’t explode)
   walletAddress: string | null;
   walletVerifiedAt: number | null;
   currentNonce: string | null;
