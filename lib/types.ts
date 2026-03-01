@@ -19,8 +19,8 @@ export interface AppNotification {
   type: NotificationType;
   title: string;
   body: string;
-  createdAt: number;
-  readAt: number | null;
+  createdAt: number; // ms
+  readAt: number | null; // ms
   actionUrl?: string;
 }
 
@@ -35,62 +35,91 @@ export interface NotificationPreferences {
 export interface UserStats {
   id: string;
   username: string;
-  balance: number;
-  totalMined: number;
+
+  // UI balance display fields
+  balance: number;      // legacy (can stay 0 if not used)
+  totalMined: number;   // should mirror server totalMinedEcho
+
   referrals: number;
-  joinedDate: number;
+  joinedDate: number; // ms
   guest: boolean;
   riskScore: number;
   referralCode: string;
+
   isAdmin?: boolean;
   priorityAirdrop?: boolean;
   pfpUrl?: string;
   email?: string;
   emailVerified?: boolean;
+
   notificationPreferences: NotificationPreferences;
 }
 
 export interface StreakInfo {
   currentStreak: number;
-  lastSessionStartAt: number | null;
-  lastSessionEndAt: number | null;
-  graceEndsAt: number | null;
+  lastSessionStartAt: number | null; // ms
+  lastSessionEndAt: number | null;   // ms
+  graceEndsAt: number | null;        // ms
 }
 
-// ✅ Updated: includes optional server-backed fields
+export interface WalletState {
+  address: string | null;
+  verified: boolean;
+  verifiedAt: string | null; // ISO string
+}
+
+/**
+ * MiningSession contract
+ *
+ * Legacy UI expects:
+ * - startTime/endTime in ms
+ * - effectiveRate is PER-SECOND (MineTab uses effectiveRate * 3600 to display E/H)
+ *
+ * Server-backed truth:
+ * - sessionMined (float)
+ * - lastAccruedAt (ms)
+ * - baseRatePerHr & multiplier (exact server values)
+ */
 export interface MiningSession {
   id: string;
   isActive: boolean;
 
-  // legacy UI fields (your MineTab uses these)
-  startTime: number | null;
-  endTime: number | null;
-  baseRate: number;
+  // ----- legacy UI fields -----
+  startTime: number | null; // ms
+  endTime: number | null;   // ms
+  baseRate: number;         // legacy UI base (can be derived from baseRatePerHr/3600)
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number; // per-second in your UI math
+
+  /**
+   * IMPORTANT: PER-SECOND rate.
+   * MineTab displays E/H via (effectiveRate * 3600).
+   */
+  effectiveRate: number;
+
   status: "active" | "ended" | "settled";
 
-  // ✅ NEW server-backed fields
-  sessionMined: number; // server truth for current session mined
-  lastAccruedAt: number | null; // ms timestamp of last accrual
-  baseRatePerHr?: number; // from DB session
-  multiplier?: number; // from DB session
+  // ----- server truth fields -----
+  sessionMined: number;        // current session mined (server truth)
+  lastAccruedAt: number | null; // ms timestamp
+
+  baseRatePerHr: number; // server base rate per hour
+  multiplier: number;    // server multiplier
 }
 
 export interface ActiveBoost {
   id: string;
   type: "AD" | "STORE";
   multiplier: number;
-  startAt: number;
-  expiresAt: number;
+  startAt: number;   // ms
+  expiresAt: number; // ms
   sourceRef?: string;
 }
 
 export interface LedgerEntry {
   id: string;
-  timestamp: number;
+  timestamp: number; // ms
   deltaEcho: number;
   reason:
     | "session_settlement"
@@ -115,30 +144,27 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-// ✅ New wallet object (what /api/state returns)
-export interface WalletState {
-  address: string | null;
-  verified: boolean;
-  verifiedAt: string | null;
-}
-
-// ✅ AppState now includes server fields, but keeps your old ones too
 export interface AppState {
-  // server auth + wallet (your build errors were because these were missing)
+  // ---- server contract ----
   authed: boolean;
   wallet: WalletState;
 
-  // existing app fields your UI expects
+  // ---- UI contract ----
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
+
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // legacy wallet fields (kept so old UI code doesn’t explode)
+  /**
+   * Legacy wallet fields.
+   * These should ALWAYS mirror `wallet` so old UI code doesn’t explode.
+   * You can delete these after you finish refactors.
+   */
   walletAddress: string | null;
-  walletVerifiedAt: number | null;
+  walletVerifiedAt: number | null; // ms
   currentNonce: string | null;
 }
