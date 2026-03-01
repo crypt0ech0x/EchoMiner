@@ -20,33 +20,37 @@ export default function EchoMinerApp() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
-  // initial load
+  // Initial load
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         setLoadError(null);
         const s = await EchoAPI.getState();
         if (!mounted) return;
         setState(s);
+
+        // If not authed, put them on wallet tab so they connect/verify
         if (!s.authed) setActiveTab(Tab.WALLET);
       } catch (e: any) {
         if (!mounted) return;
-        setLoadError(e?.message || "Failed to load");
+        setLoadError(e?.message || "Failed to load state");
       }
     })();
+
     return () => {
       mounted = false;
     };
   }, []);
 
-  // tick clock for MineTab progress UI
+  // Keep a "now" clock for UI animations / countdown
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // refresh mining state (server accrual) while active
+  // Refresh server state periodically while mining is active
   useEffect(() => {
     if (!state) return;
 
@@ -57,26 +61,51 @@ export default function EchoMinerApp() {
           setState(updated);
         }
       } catch {
-        // ignore
+        // ignore (don’t crash UI)
       }
     }, 2000);
 
     return () => clearInterval(interval);
   }, [state?.session?.isActive]);
 
-  // Show “live” earnings: server-truth sessionMined + small local drift since lastAccruedAt
+  /**
+   * IMPORTANT:
+   * - sessionMined is server-truth
+   * - lastAccruedAt is when server last updated it
+   * - We “smooth” the display locally so it increments on screen between refreshes
+   */
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
-    const base = state.session.sessionMined ?? 0;
+    const base = Number(state.session.sessionMined ?? 0);
 
-    // Optional smoothing: add seconds since lastAccruedAt * effectiveRate
-    const lastAccruedAt = state.session.lastAccruedAt ? new Date(state.session.lastAccruedAt).getTime() : null;
-    if (!lastAccruedAt) return base;
+    const la = state.session.lastAccruedAt;
+    if (!la) return base;
 
-    const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
-    return base + deltaSec * (state.session.effectiveRate ?? 0);
-  }, [state, now]);
+    const lastMs =
+      typeof la === "number"
+        ? la
+        : typeof la === "string"
+          ? new Date(la).getTime()
+          : NaN;
+
+    if (!Number.isFinite(lastMs)) return base;
+
+    // effectiveRate is PER SECOND in your UI
+    const effectiveRatePerSec = Number(state.session.effectiveRate ?? 0);
+    const deltaSec = Math.max(0, (now - lastMs) / 1000);
+
+    return base + deltaSec * effectiveRatePerSec;
+  }, [state?.session?.isActive, state?.session?.sessionMined, state?.session?.lastAccruedAt, state?.session?.effectiveRate, now]);
+
+  // Helpers for MineTab props
+  const effectiveRatePerSec = useMemo(() => Number(state?.session?.effectiveRate ?? 0), [state]);
+  const totalMultiplier = useMemo(() => {
+    const base = Number(state?.session?.baseRate ?? 0);
+    const eff = Number(state?.session?.effectiveRate ?? 0);
+    if (!base || !Number.isFinite(base)) return 1;
+    return eff / base;
+  }, [state]);
 
   if (loadError) {
     return (
@@ -92,7 +121,7 @@ export default function EchoMinerApp() {
               setState(s);
               if (!s.authed) setActiveTab(Tab.WALLET);
             } catch (e: any) {
-              setLoadError(e?.message || "Failed to load");
+              setLoadError(e?.message || "Failed to load state");
             }
           }}
         >
@@ -110,9 +139,6 @@ export default function EchoMinerApp() {
     );
   }
 
-  const totalMultiplier =
-    state.session?.baseRate > 0 ? state.session.effectiveRate / state.session.baseRate : 1;
-
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-purple-600/20 blur-[100px] rounded-full" />
@@ -129,11 +155,17 @@ export default function EchoMinerApp() {
           <MineTab
             state={state}
             sessionEarnings={sessionEarnings}
-            onStartSession={async () => setState(await EchoAPI.startSession())}
+            effectiveRate={effectiveRatePerSec}
             totalMultiplier={totalMultiplier}
-            effectiveRate={state.session.effectiveRate}
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
+            onStartSession={async () => {
+              // IMPORTANT: Your start route expects baseRatePerHr + multiplier.
+              // If your EchoAPI.startSession already sends those, fine.
+              // If not, we just call it and then refresh state.
+              const updated = await EchoAPI.startSession();
+              setState(updated);
+            }}
           />
         )}
 
@@ -150,7 +182,7 @@ export default function EchoMinerApp() {
         {activeTab === Tab.WALLET && (
           <WalletTab
             totalMinedEcho={state.user.totalMined}
-            verifiedWalletAddress={state.wallet.address}
+            verifiedWalletAddress={state.wallet?.address ?? state.walletAddress ?? null}
           />
         )}
       </Layout>
