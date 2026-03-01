@@ -57,24 +57,24 @@ export interface StreakInfo {
   graceEndsAt: number | null;
 }
 
+export type SessionStatus = "active" | "ended" | "settled";
+
 export interface MiningSession {
   id: string;
   isActive: boolean;
+  startTime: number | null;
+  endTime: number | null;
 
-  // UI fields
-  startTime: number | null; // ms
-  endTime: number | null;   // ms
-  baseRate: number;         // per second
+  // UI legacy fields (your MineTab uses these)
+  baseRate: number; // ECHO per second
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-  effectiveRate: number;    // per second
-  status: "active" | "ended" | "settled";
+  effectiveRate: number; // ECHO per second
+  status: SessionStatus;
 
-  // Server-backed extras (so MineTab can show real mined)
-  sessionMined?: number;    // total earned during this session (server truth)
-  startedAt?: string | null;
-  lastAccruedAt?: string | null;
+  // Added so UI can show server truth without guessing
+  sessionMined?: number; // ECHO mined so far in this session
   baseRatePerHr?: number;
   multiplier?: number;
 }
@@ -115,28 +115,29 @@ export interface StoreItem {
   isPopular?: boolean;
 }
 
-export type WalletInfo = {
+export type WalletState = {
   address: string | null;
   verified: boolean;
   verifiedAt: string | null; // ISO string or null
 };
 
 export interface AppState {
-  // NEW (matches server truth)
+  // ✅ NEW: matches /api/state server response expectations
   authed: boolean;
-  wallet: WalletInfo;
+  wallet: WalletState;
 
-  // existing UI shape
+  // Existing app shape used throughout your UI
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
+
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  // legacy fields used by some UI bits (keep them so you don’t crash)
+  // legacy fields you used earlier (keep them so old code doesn’t crash)
   walletAddress: string | null;
-  walletVerifiedAt: number | null; // ms
+  walletVerifiedAt: number | null;
   currentNonce: string | null;
 }
