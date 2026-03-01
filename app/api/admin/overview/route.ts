@@ -22,9 +22,9 @@ export async function GET() {
           take: 1,
         },
         // If you add Purchase model:
-        purchases: {
-          select: { amountEcho: true, createdAt: true },
-        },
+        // purchases: {
+          // select: { amountEcho: true, createdAt: true },
+        // },
       } as any,
     });
 
