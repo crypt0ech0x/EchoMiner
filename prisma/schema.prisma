@@ -1,103 +1,47 @@
-// prisma/schema.prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
 
 datasource db {
   provider = "postgresql"
-}
-
-generator client {
-  provider = "prisma-client-js"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  email String? @unique
-
-  totalMinedEcho Float @default(0)
-
-  wallet        Wallet?
+  id            String         @id @default(uuid())
+  walletAddress String         @unique
+  totalMined    Float          @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   miningSession MiningSession?
-  miningHistory MiningHistory[]
-  sessions      Session[]
 
-  @@index([totalMinedEcho])
+  @@map("users")
 }
 
 model Wallet {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  address    String    @unique
-  verified   Boolean   @default(false)
-  verifiedAt DateTime?
-
-  userId String? @unique
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-}
-
-model WalletNonce {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid())
+  address   String   @unique
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  verified  Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  walletAddress String
-  nonce         String
-
-  @@index([walletAddress])
-  @@index([nonce])
+  @@map("wallets")
 }
 
 model MiningSession {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  baseRatePerHr  Float     @default(10.0)   // <-- per-wallet default: 10 Echo per hour
+  multiplier     Float     @default(1.0)    // for future boosts/streaks
+  startedAt      DateTime?
+  lastAccruedAt  DateTime?
+  sessionMined   Float     @default(0)
+  isActive       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  isActive Boolean @default(false)
-
-  startedAt     DateTime?
-  lastAccruedAt DateTime?
-
-  baseRatePerHr Float @default(0)
-  multiplier    Float @default(1)
-
-  sessionMined Float @default(0)
-
-  @@index([isActive])
-}
-
-model MiningHistory {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  startedAt DateTime
-  endedAt   DateTime
-
-  baseRatePerHr Float
-  multiplier    Float
-  totalMined    Float
-
-  @@index([userId])
-  @@index([createdAt])
-}
-
-model Session {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  expiresAt DateTime
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  revokedAt DateTime?
-
-  @@index([userId])
-  @@index([expiresAt])
+  @@map("mining_sessions")
 }
