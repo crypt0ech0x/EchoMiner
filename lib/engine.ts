@@ -1,224 +1,229 @@
 // lib/engine.ts
 import crypto from "crypto";
-import type { AppState, ActiveBoost, LedgerEntry, MiningSession } from "./types";
+import type {
+  AppState,
+  ActiveBoost,
+  LedgerEntry,
+  NotificationType,
+  AppNotification,
+} from "@/lib/types";
 
 /**
  * NOTE:
- * This "engine" is only for the legacy/local-state routes (boost/store/snapshot).
- * Your mining accrual is now server-truth in DB via /api/mining/start + /api/mining/refresh.
+ * You moved mining to DB routes (/api/mining/start, /api/mining/refresh).
+ * This engine is now only used by legacy routes like:
+ *   - /api/boost/activate  (expects EchoEngine.addAdBoost)
+ *   - /api/snapshot        (expects EchoEngine.getSnapshotCSV)
+ *   - /api/store/webhook   (often expects a helper to apply purchases)
  *
- * So this engine should be:
- * - safe
- * - type-correct
- * - defensive (won't crash if fields are missing)
+ * So we keep it focused and compatible.
  */
 
-const AD_BOOST_MULTIPLIER = 2;
-const AD_BOOST_DURATION_MS = 15 * 60 * 1000; // 15 min (adjust as desired)
-
-function uid(prefix = "id") {
-  // works in node runtime (Vercel) + avoids Math.random collisions
+function uid(prefix: string) {
   return `${prefix}_${crypto.randomBytes(8).toString("hex")}`;
 }
 
-function nowMs(n?: number) {
-  return typeof n === "number" && Number.isFinite(n) ? n : Date.now();
+function nowMs() {
+  return Date.now();
 }
 
-function safeNumber(n: any, fallback: number) {
-  const x = Number(n);
-  return Number.isFinite(x) ? x : fallback;
+function addLedger(state: AppState, entry: Omit<LedgerEntry, "id" | "hash">): AppState {
+  const id = uid("led");
+  const hash = crypto.createHash("sha256").update(JSON.stringify({ id, ...entry })).digest("hex");
+
+  const next: AppState = {
+    ...state,
+    ledger: [
+      ...(state.ledger ?? []),
+      {
+        id,
+        hash,
+        ...entry,
+      },
+    ],
+  };
+
+  return next;
 }
 
-function computeActiveBoostMultiplier(state: AppState, at: number) {
-  const boosts = Array.isArray(state.activeBoosts) ? state.activeBoosts : [];
-  let mult = 1;
+function addNotification(
+  state: AppState,
+  notif: Omit<AppNotification, "id" | "createdAt" | "readAt">
+): AppState {
+  const n: AppNotification = {
+    id: uid("notif"),
+    createdAt: nowMs(),
+    readAt: null,
+    ...notif,
+  };
 
-  for (const b of boosts) {
-    const startAt = safeNumber(b.startAt, 0);
-    const expiresAt = safeNumber(b.expiresAt, 0);
-    if (startAt <= at && at <= expiresAt) {
-      mult *= safeNumber(b.multiplier, 1);
-    }
-  }
-
-  return mult;
+  return {
+    ...state,
+    notifications: [n, ...(state.notifications ?? [])],
+  };
 }
 
 /**
- * Recomputes session.effectiveRate based on:
- * - baseRate
- * - streakMultiplier
- * - boostMultiplier
- * - purchaseMultiplier
+ * Recomputes effectiveRate (ECHO per second) based on multipliers you already have in AppState.
+ * Your MineTab uses session.effectiveRate heavily.
  */
-export function recomputeEffectiveRate(state: AppState, at = Date.now()): AppState {
-  const s = state.session;
+export function recomputeEffectiveRate(state: AppState): AppState {
+  const session = state.session;
 
-  // If session missing, do nothing safely
-  if (!s) return state;
+  // baseRate in your types is "per second" in the UI math (MineTab uses effectiveRate * 3600).
+  const baseRate = Number(session.baseRate ?? 0);
 
-  // Derived multipliers
-  const streakMult = safeNumber(s.streakMultiplier, 1);
-  const purchaseMult = safeNumber(s.purchaseMultiplier, 1);
+  const streakMult = Number(session.streakMultiplier ?? 1);
+  const boostMult = Number(session.boostMultiplier ?? 1);
+  const purchaseMult = Number(session.purchaseMultiplier ?? 1);
 
-  // If you model boosts in session.boostMultiplier, keep it in sync with activeBoosts.
-  const boostMult = computeActiveBoostMultiplier(state, at);
-
-  const baseRate = safeNumber(s.baseRate, 0); // your UI treats this as "per second"
   const effectiveRate = baseRate * streakMult * boostMult * purchaseMult;
 
-  state.session = {
-    ...s,
-    boostMultiplier: boostMult,
-    effectiveRate,
+  return {
+    ...state,
+    session: {
+      ...session,
+      effectiveRate,
+    },
   };
-
-  return state;
 }
 
 export class EchoEngine {
   /**
-   * Adds a 2x Ad boost (or reuses if one already active) and recomputes effective rate.
-   * Called by: /app/api/boost/activate/route.ts
+   * --- BOOST ---
+   * Expected by: /app/api/boost/activate/route.ts
+   * Usage: EchoEngine.addAdBoost(state, now)
    */
-  static addAdBoost(state: AppState, at?: number): AppState {
-    const now = nowMs(at);
+  static addAdBoost(state: AppState, now: number = nowMs()): AppState {
+    const durationMs = 60 * 60 * 1000; // 1 hour boost (adjust if you want)
+    const boost: ActiveBoost = {
+      id: uid("boost"),
+      type: "AD",
+      multiplier: 2,
+      startAt: now,
+      expiresAt: now + durationMs,
+    };
 
-    if (!Array.isArray(state.activeBoosts)) state.activeBoosts = [];
+    const next: AppState = {
+      ...state,
+      activeBoosts: [boost, ...(state.activeBoosts ?? [])],
+      session: {
+        ...state.session,
+        boostMultiplier: 2,
+      },
+    };
 
-    // Optional: if there is already an active AD boost, just extend it instead of stacking
-    const existing = state.activeBoosts.find(
-      (b) => b.type === "AD" && safeNumber(b.startAt, 0) <= now && now <= safeNumber(b.expiresAt, 0)
-    );
+    const withRate = recomputeEffectiveRate(next);
 
-    if (existing) {
-      existing.expiresAt = now + AD_BOOST_DURATION_MS;
-    } else {
-      const boost: ActiveBoost = {
-        id: uid("boost"),
-        type: "AD",
-        multiplier: AD_BOOST_MULTIPLIER,
-        startAt: now,
-        expiresAt: now + AD_BOOST_DURATION_MS,
-      };
-      state.activeBoosts.push(boost);
-    }
-
-    // Ledger entry (optional, but your UI expects ledger array)
-    if (!Array.isArray(state.ledger)) state.ledger = [];
-    const entry: LedgerEntry = {
-      id: uid("led"),
+    const withLedger = addLedger(withRate, {
       timestamp: now,
       deltaEcho: 0,
       reason: "boost_activation",
-      hash: uid("hash"),
-    };
-    state.ledger.push(entry);
+    });
 
-    // Recompute effective rate
-    return recomputeEffectiveRate(state, now);
+    return addNotification(withLedger, {
+      type: "boost_expired" as NotificationType,
+      title: "Boost Activated",
+      body: "2x mining boost active for 1 hour.",
+    });
   }
 
   /**
-   * Creates a CSV snapshot for exporting.
-   * Called by: /app/api/snapshot/route.ts
+   * Clears expired boosts and resets boostMultiplier if needed.
+   * Call this on load or refresh if you want to keep state clean.
+   */
+  static pruneExpiredBoosts(state: AppState, now: number = nowMs()): AppState {
+    const boosts = state.activeBoosts ?? [];
+    const alive = boosts.filter((b) => b.expiresAt > now);
+
+    const hadAdBoost = alive.some((b) => b.type === "AD");
+    const boostMultiplier = hadAdBoost ? Math.max(...alive.filter(b => b.type === "AD").map(b => b.multiplier)) : 1;
+
+    const next: AppState = {
+      ...state,
+      activeBoosts: alive,
+      session: { ...state.session, boostMultiplier },
+    };
+
+    return recomputeEffectiveRate(next);
+  }
+
+  /**
+   * --- SNAPSHOT CSV ---
+   * Expected by: /app/api/snapshot/route.ts
+   * Some of your code calls getSnapshotCSV(), other code calls snapshotCSV().
+   * We provide BOTH to stop compile errors.
    */
   static snapshotCSV(state: AppState): string {
     const wallet = state.walletAddress ?? "";
-    const verifiedAt = state.walletVerifiedAt ? new Date(state.walletVerifiedAt).toISOString() : "";
-    const totalMined = safeNumber(state.user?.totalMined, 0);
+    const mined = state.user?.totalMined ?? 0;
 
-    // Keep it simple; you can add more columns later
-    const headers = ["userId", "username", "walletAddress", "walletVerifiedAt", "totalMined"];
-    const row = [
-      state.user?.id ?? "",
-      state.user?.username ?? "",
-      wallet,
-      verifiedAt,
-      String(totalMined),
-    ];
+    const headers = ["walletAddress", "totalMined"];
+    const rows = [[wallet, String(mined)]];
 
-    return `${headers.join(",")}\n${row.map(csvEscape).join(",")}\n`;
+    return [headers.join(","), ...rows.map((r) => r.map(csvEscape).join(","))].join("\n");
+  }
+
+  static getSnapshotCSV(state: AppState): string {
+    return EchoEngine.snapshotCSV(state);
   }
 
   /**
-   * Applies a store webhook / simulated Stripe purchase:
-   * - optionally adds "STORE" boost
-   * - optionally adds balance/topup
-   * Called by: /app/api/store/webhook/route.ts
+   * --- STORE / STRIPE WEBHOOK HELPERS ---
+   * Expected by: /app/api/store/webhook/route.ts (commonly)
+   * This is a "simulated" purchase apply. If you wire real Stripe later, keep the shape.
    */
-  static applyStoreWebhook(state: AppState, sessionId: string, at?: number): AppState {
-    const now = nowMs(at);
+  static applyPurchase(state: AppState, payload: { itemId: string; sessionId?: string; now?: number }): AppState {
+    const now = payload.now ?? nowMs();
 
-    if (!Array.isArray(state.purchaseHistory)) state.purchaseHistory = [];
-    if (!Array.isArray(state.activeBoosts)) state.activeBoosts = [];
-    if (!Array.isArray(state.ledger)) state.ledger = [];
+    // You can map itemId -> effects here. Keeping it simple:
+    // - Example: itemId "mult_2x_7d" sets purchaseMultiplier to 2
+    let purchaseMultiplier = state.session.purchaseMultiplier ?? 1;
+    let deltaEcho = 0;
 
-    // Record purchase event (minimal)
-    state.purchaseHistory.push({
-      id: uid("purchase"),
-      sessionId,
-      createdAt: now,
-    });
+    if (payload.itemId.includes("mult_2x")) purchaseMultiplier = 2;
+    if (payload.itemId.includes("mult_3x")) purchaseMultiplier = 3;
+    if (payload.itemId.includes("topup_")) {
+      // e.g. topup_100
+      const amt = Number(payload.itemId.replace("topup_", ""));
+      if (Number.isFinite(amt) && amt > 0) deltaEcho = amt;
+    }
 
-    // Example behavior: store purchase grants 1.5x for 7 days (edit as you like)
-    const boost: ActiveBoost = {
-      id: uid("boost"),
-      type: "STORE",
-      multiplier: 1.5,
-      startAt: now,
-      expiresAt: now + 7 * 24 * 60 * 60 * 1000,
-      sourceRef: sessionId,
+    let next: AppState = {
+      ...state,
+      session: {
+        ...state.session,
+        purchaseMultiplier,
+      },
+      purchaseHistory: [
+        ...(state.purchaseHistory ?? []),
+        { id: uid("purchase"), itemId: payload.itemId, sessionId: payload.sessionId ?? null, createdAt: now },
+      ],
     };
-    state.activeBoosts.push(boost);
 
-    // Ledger entry
-    const entry: LedgerEntry = {
-      id: uid("led"),
-      timestamp: now,
-      deltaEcho: 0,
-      reason: "purchase_topup",
-      hash: uid("hash"),
-    };
-    state.ledger.push(entry);
+    next = recomputeEffectiveRate(next);
 
-    return recomputeEffectiveRate(state, now);
-  }
+    if (deltaEcho !== 0) {
+      // credit balance immediately (legacy behavior)
+      next = {
+        ...next,
+        user: { ...next.user, balance: (next.user.balance ?? 0) + deltaEcho },
+      };
 
-  /**
-   * Utility to ensure session object shape matches your MiningSession type
-   * (including sessionMined + valid status union).
-   * If you still have any legacy route creating a session, use this.
-   */
-  static ensureSessionShape(session: Partial<MiningSession>, now = Date.now()): MiningSession {
-    const startTime = session.startTime ?? now;
-    const endTime = session.endTime ?? now;
+      next = addLedger(next, {
+        timestamp: now,
+        deltaEcho,
+        reason: "purchase_topup",
+      });
+    }
 
-    return {
-      id: session.id ?? uid("sess"),
-      isActive: !!session.isActive,
-      startTime,
-      endTime,
-      baseRate: safeNumber(session.baseRate, 0),
-      streakMultiplier: safeNumber(session.streakMultiplier, 1),
-      boostMultiplier: safeNumber(session.boostMultiplier, 1),
-      purchaseMultiplier: safeNumber(session.purchaseMultiplier, 1),
-      effectiveRate: safeNumber(session.effectiveRate, 0),
-      status: (session.status === "active" || session.status === "ended" || session.status === "settled")
-        ? session.status
-        : (session.isActive ? "active" : "ended"),
-      // IMPORTANT: fixes your "sessionMined is missing" compile error
-      sessionMined: safeNumber((session as any).sessionMined, 0),
-    };
+    return next;
   }
 }
 
 function csvEscape(v: string) {
-  const s = String(v ?? "");
-  // escape quotes + wrap if needed
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
+  if (v.includes(",") || v.includes('"') || v.includes("\n")) {
+    return `"${v.replace(/"/g, '""')}"`;
   }
-  return s;
+  return v;
 }
