@@ -1,164 +1,268 @@
+// lib/engine.ts
+// Local (client) state engine used by older UI flows.
+// Your DB routes are now the source of truth, but this file must still compile
+// because some UI/components still import it.
 
-import { 
-  AppState, 
-  NotificationType, 
-  ActiveBoost, 
-  AppNotification 
-} from './types';
-import { 
-  BASE_MINING_RATE, 
-  SESSION_DURATION_MS, 
-  STREAK_GRACE_PERIOD_MS, 
-  GET_STREAK_MULTIPLIER,
-  AD_BOOST_DURATION_MS,
-  AD_BOOST_MULTIPLIER,
-  AD_BOOST_MAX_QUEUE_MS,
-  STORE_ITEMS
-} from './constants';
+import { AppState, MiningSession, StreakInfo, ActiveBoost, LedgerEntry, AppNotification } from "./types";
 
-export class EchoEngine {
-  
-  static recalculateRate(state: AppState, now: number) {
-    if (!state.session.isActive) return;
-    const refMult = 1 + (state.user.referrals * 0.25);
-    const adMult = state.activeBoosts
-      .filter(b => b.type === 'AD' && b.expiresAt > now)
-      .reduce((acc, b) => acc * b.multiplier, 1.0);
-    const storeMult = state.activeBoosts
-      .filter(b => b.type === 'STORE' && b.expiresAt > now)
-      .reduce((acc, b) => acc * b.multiplier, 1.0);
-    
-    state.session.boostMultiplier = adMult * refMult;
-    state.session.purchaseMultiplier = storeMult;
-    state.session.effectiveRate = state.session.baseRate * state.session.streakMultiplier * adMult * refMult * storeMult;
+// --- Tunables (match your UI expectations) ---
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h (your MineTab UI says 24h)
+const BASE_MINING_RATE_PER_SEC = 1 / (24 * 60 * 60); // ~1.0 ECHO/day by default
+const LEDGER_HASH_PREFIX = "hash_";
+
+// --- Helpers ---
+function nowMs() {
+  return Date.now();
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function uid(prefix: string) {
+  return `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now()}`;
+}
+
+function fakeHash() {
+  return `${LEDGER_HASH_PREFIX}${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+}
+
+export function getStreakMultiplier(streakDays: number) {
+  // Keep it simple (you can swap to your real streak curve)
+  // 1.0x base, +0.1x per day capped at 3.0x
+  return clamp(1 + streakDays * 0.1, 1, 3);
+}
+
+export function createInitialState(): AppState {
+  const now = nowMs();
+
+  const streak: StreakInfo = {
+    currentStreak: 0,
+    lastSessionStartAt: null,
+    lastSessionEndAt: null,
+    graceEndsAt: null,
+  };
+
+  const session: MiningSession = {
+    id: "sess_none",
+    isActive: false,
+    startTime: null,
+    endTime: null,
+    baseRate: BASE_MINING_RATE_PER_SEC, // per-sec rate used by your old UI math
+    streakMultiplier: 1,
+    boostMultiplier: 1,
+    purchaseMultiplier: 1,
+    effectiveRate: BASE_MINING_RATE_PER_SEC,
+    status: "ended",
+
+    // ✅ REQUIRED by your updated types
+    sessionMined: 0,
+
+    // Optional fields some of your newer code added over time (safe to keep)
+    startedAt: null,
+    lastAccruedAt: null,
+    baseRatePerHr: 0,
+    multiplier: 1,
+  };
+
+  return {
+    user: {
+      id: uid("user"),
+      username: "Voyager",
+      balance: 0,
+      totalMined: 0,
+      referrals: 0,
+      joinedDate: now,
+      guest: true,
+      riskScore: 0,
+      referralCode: uid("ref").slice(0, 10),
+      notificationPreferences: {
+        session_end: true,
+        streak_grace_warning: true,
+        boost_expired: true,
+        weekly_summary: true,
+        airdrop_announcement: true,
+      },
+    },
+    streak,
+    session,
+    activeBoosts: [] as ActiveBoost[],
+    ledger: [] as LedgerEntry[],
+    purchaseHistory: [],
+    notifications: [] as AppNotification[],
+
+    walletAddress: null,
+    walletVerifiedAt: null,
+    currentNonce: null,
+
+    // If your AppState was extended elsewhere, keep extra fields here if needed
+    authed: false as any,
+    wallet: { address: null, verified: false, verifiedAt: null } as any,
+  } as any;
+}
+
+/**
+ * Recompute effective rate based on streak + boosts + purchases.
+ * In your older UI, effectiveRate is per-second.
+ */
+export function recomputeEffectiveRate(state: AppState) {
+  const streakMult = state.session.streakMultiplier || 1;
+  const boostMult = state.session.boostMultiplier || 1;
+  const purchaseMult = state.session.purchaseMultiplier || 1;
+
+  state.session.effectiveRate = state.session.baseRate * streakMult * boostMult * purchaseMult;
+}
+
+/**
+ * Start a mining session locally (legacy mode).
+ * NOTE: Your server DB routes do real accrual now; this is only to keep old code compiling.
+ */
+export function startSession(state: AppState) {
+  const now = nowMs();
+  const streakMult = getStreakMultiplier((state.streak?.currentStreak ?? 0) + 1);
+
+  const session: MiningSession = {
+    id: uid("sess"),
+    isActive: true,
+    startTime: now,
+    endTime: now + SESSION_DURATION_MS,
+    baseRate: BASE_MINING_RATE_PER_SEC,
+    streakMultiplier: streakMult,
+    boostMultiplier: state.session.boostMultiplier || 1,
+    purchaseMultiplier: state.session.purchaseMultiplier || 1,
+    effectiveRate: 0,
+    status: "active",
+
+    // ✅ REQUIRED
+    sessionMined: 0,
+
+    // Optional compatibility fields
+    startedAt: now,
+    lastAccruedAt: now,
+    baseRatePerHr: 1,
+    multiplier: streakMult,
+  };
+
+  state.session = session;
+
+  state.streak.lastSessionStartAt = now;
+  recomputeEffectiveRate(state);
+
+  // Ledger event
+  state.ledger.push({
+    id: uid("led"),
+    timestamp: now,
+    deltaEcho: 0,
+    reason: "session_start",
+    sessionId: session.id,
+    hash: fakeHash(),
+  });
+
+  return state;
+}
+
+/**
+ * Tick: accrue locally based on elapsed time.
+ * (Legacy) Your server refresh route does this now, but older UI may still call tick().
+ */
+export function tick(state: AppState, now: number = nowMs()) {
+  if (!state.session?.isActive || !state.session.startTime || !state.session.endTime) return state;
+
+  const end = state.session.endTime;
+  const effectiveNow = Math.min(now, end);
+
+  // Track lastAccruedAt for smooth accrual (fallback to startTime)
+  const last =
+    (state.session as any).lastAccruedAt != null
+      ? new Date((state.session as any).lastAccruedAt).getTime()
+      : state.session.startTime;
+
+  const deltaSec = Math.max(0, (effectiveNow - last) / 1000);
+
+  recomputeEffectiveRate(state);
+
+  const earned = deltaSec * (state.session.effectiveRate || 0);
+
+  // ✅ Keep both balances aligned for old UI
+  state.user.balance += earned;
+  state.user.totalMined += earned;
+
+  // ✅ REQUIRED field updated
+  state.session.sessionMined = (state.session.sessionMined || 0) + earned;
+
+  // update lastAccruedAt compatibility
+  (state.session as any).lastAccruedAt = new Date(effectiveNow).toISOString();
+
+  if (effectiveNow >= end) {
+    state.session.isActive = false;
+    state.session.status = "ended";
+    state.streak.lastSessionEndAt = end;
+
+    // ledger settlement
+    state.ledger.push({
+      id: uid("led"),
+      timestamp: effectiveNow,
+      deltaEcho: earned,
+      reason: "session_settlement",
+      sessionId: state.session.id,
+      hash: fakeHash(),
+    });
+
+    // notification
+    state.notifications.push({
+      id: uid("notif"),
+      type: "session_end",
+      title: "Mining Complete",
+      body: `Session ended. +${earned.toFixed(6)} ECHO`,
+      createdAt: effectiveNow,
+      readAt: null,
+    } as any);
   }
 
-  static processMaintenance(state: AppState, now: number): boolean {
-    let changed = false;
+  return state;
+}
 
-    // 1. Filter out expired boosts
-    const initialBoostCount = state.activeBoosts.length;
-    state.activeBoosts = state.activeBoosts.filter(b => b.expiresAt > now);
-    if (state.activeBoosts.length !== initialBoostCount) {
-      changed = true;
-      if (state.session.isActive) this.recalculateRate(state, now);
-    }
+/**
+ * Apply an ad boost locally (legacy).
+ */
+export function activateAdBoost(state: AppState, multiplier: number = 2, durationMs: number = 10 * 60 * 1000) {
+  const now = nowMs();
+  const boost: ActiveBoost = {
+    id: uid("boost"),
+    type: "AD",
+    multiplier,
+    startAt: now,
+    expiresAt: now + durationMs,
+  };
 
-    // 2. Settle sessions
-    if (state.session.isActive && state.session.endTime && now >= state.session.endTime) {
-      const durationSec = (state.session.endTime - (state.session.startTime || 0)) / 1000;
-      const earnings = durationSec * state.session.effectiveRate;
-      state.user.balance += earnings;
-      state.user.totalMined += earnings;
-      state.ledger.push({ 
-        id: 'led_settle_' + now, 
-        timestamp: now, 
-        deltaEcho: earnings, 
-        reason: 'session_settlement', 
-        sessionId: state.session.id, 
-        hash: btoa(state.session.id + earnings) 
-      });
-      state.streak.lastSessionEndAt = state.session.endTime;
-      state.streak.graceEndsAt = state.session.endTime + STREAK_GRACE_PERIOD_MS;
-      state.session.isActive = false;
-      state.session.status = 'settled';
-      
-      state.notifications.unshift({
-        id: 'notif_settle_' + now,
-        type: 'session_end',
-        title: 'Mining Complete',
-        body: `Your cycle ended. Earned +${earnings.toFixed(4)} ECHO.`,
-        createdAt: now,
-        readAt: null
-      });
+  state.activeBoosts = [...(state.activeBoosts ?? []), boost];
+  state.session.boostMultiplier = multiplier;
+  recomputeEffectiveRate(state);
 
-      changed = true;
-    }
+  state.ledger.push({
+    id: uid("led"),
+    timestamp: now,
+    deltaEcho: 0,
+    reason: "boost_activation",
+    hash: fakeHash(),
+  });
 
-    return changed;
-  }
+  return state;
+}
 
-  static startSession(state: AppState, now: number): AppState {
-    if (state.session.isActive) throw new Error("Session already active");
+/**
+ * Clear expired boosts (legacy).
+ */
+export function pruneBoosts(state: AppState, now: number = nowMs()) {
+  const boosts = state.activeBoosts ?? [];
+  const active = boosts.filter((b) => b.expiresAt > now);
 
-    let newStreak = state.streak.currentStreak;
-    if (state.streak.graceEndsAt && now > state.streak.graceEndsAt) newStreak = 1;
-    else newStreak += 1;
+  state.activeBoosts = active;
 
-    const streakMult = GET_STREAK_MULTIPLIER(newStreak);
-    const sessionId = 'sess_' + now;
-    
-    state.session = {
-      id: sessionId, isActive: true, startTime: now, endTime: now + SESSION_DURATION_MS,
-      baseRate: BASE_MINING_RATE, streakMultiplier: streakMult, boostMultiplier: 1,
-      purchaseMultiplier: 1, effectiveRate: 0, status: 'active'
-    };
-    
-    this.recalculateRate(state, now);
-    
-    state.streak.currentStreak = newStreak;
-    state.streak.lastSessionStartAt = now;
-    state.streak.graceEndsAt = null;
+  // If no ad boosts remain, reset boostMultiplier
+  const anyBoost = active.find((b) => b.type === "AD");
+  state.session.boostMultiplier = anyBoost ? anyBoost.multiplier : 1;
 
-    state.ledger.push({ id: 'led_start_' + now, timestamp: now, deltaEcho: 0, reason: 'session_start', sessionId, hash: btoa('start' + sessionId + now) });
-    return state;
-  }
-
-  static addAdBoost(state: AppState, now: number): AppState {
-    const existing = state.activeBoosts.find(b => b.type === 'AD' && b.expiresAt > now);
-    let startAt = now;
-    if (existing) {
-      if (existing.expiresAt - now >= AD_BOOST_MAX_QUEUE_MS) throw new Error("Boost queue full");
-      startAt = existing.expiresAt;
-      existing.expiresAt += AD_BOOST_DURATION_MS;
-    } else {
-      state.activeBoosts.push({ 
-        id: 'boost_ad_' + now, type: 'AD', multiplier: AD_BOOST_MULTIPLIER, 
-        startAt, expiresAt: startAt + AD_BOOST_DURATION_MS 
-      });
-    }
-
-    state.ledger.push({ id: 'led_boost_' + now, timestamp: now, deltaEcho: 0, reason: 'boost_activation', hash: btoa('boost' + now) });
-    this.recalculateRate(state, now);
-    return state;
-  }
-
-  static getSnapshotCSV(state: AppState): string {
-    const headers = "WalletAddress,EchoBalance,VerifiedAt,RiskScore,IsAdmin,PriorityAirdrop\n";
-    const row = `${state.walletAddress || 'N/A'},${state.user.balance.toFixed(4)},${state.walletVerifiedAt ? new Date(state.walletVerifiedAt).toISOString() : 'N/A'},${state.user.riskScore},${state.user.isAdmin ? 'TRUE' : 'FALSE'},${state.user.priorityAirdrop ? 'TRUE' : 'FALSE'}\n`;
-    return headers + row;
-  }
-
-  static processPurchase(state: AppState, sessionId: string, now: number): AppState {
-    const historyEntry = state.purchaseHistory.find(h => h.id === sessionId);
-    if (!historyEntry || historyEntry.status === 'paid') return state;
-    const item = STORE_ITEMS.find(i => i.id === historyEntry.itemId);
-    if (!item) return state;
-    
-    historyEntry.status = 'paid';
-    if (item.echoAmount) {
-      state.user.balance += item.echoAmount;
-      state.ledger.push({
-        id: 'led_purchase_' + now,
-        timestamp: now,
-        deltaEcho: item.echoAmount,
-        reason: 'purchase_topup',
-        hash: btoa(item.id + now)
-      });
-    }
-
-    if (item.id === 'resonance_echo') state.user.priorityAirdrop = true;
-    if (item.multiplier && item.multiplier > 1) {
-      state.activeBoosts.push({
-        id: 'boost_store_' + item.id + '_' + now,
-        type: 'STORE',
-        multiplier: item.multiplier,
-        startAt: now,
-        expiresAt: item.durationDays ? now + (item.durationDays * 86400000) : now + 3153600000000,
-        sourceRef: item.id
-      });
-    }
-    this.recalculateRate(state, now);
-    return state;
-  }
+  recomputeEffectiveRate(state);
+  return state;
 }
