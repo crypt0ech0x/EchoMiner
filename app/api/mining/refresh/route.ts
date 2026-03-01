@@ -5,7 +5,7 @@ import { getUserFromSessionCookie } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SESSION_DURATION_SECONDS = 60 * 60 * 3;
+const SESSION_DURATION_SECONDS = 60 * 60 * 24;
 const MIN_REFRESH_INTERVAL_SECONDS = 2;
 
 function json(data: any, init?: number) {
