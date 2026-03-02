@@ -8,7 +8,7 @@ export default defineConfig({
   },
 
   datasource: {
-  provider: "postgresql",
-  url: process.env.POSTGRES_PRISMA_URL,
-},
+    provider: "postgresql",
+    url: process.env.POSTGRES_PRISMA_URL ?? process.env.DATABASE_URL,
+  },
 });
