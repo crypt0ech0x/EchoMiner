@@ -1,14 +1,16 @@
-import { defineConfig } from "@prisma/config";
+// prisma.config.ts
+import { defineConfig } from "prisma/config";
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
-
-  migrations: {
-    path: "prisma/migrations",
-  },
-
   datasource: {
-    provider: "postgresql",
-    url: process.env.POSTGRES_PRISMA_URL ?? process.env.DATABASE_URL,
+    // For Vercel Postgres, migrations should use the NON_POOLING url when available
+    url:
+      process.env.POSTGRES_URL_NON_POOLING ??
+      process.env.POSTGRES_PRISMA_URL ??
+      process.env.DATABASE_URL ??
+      process.env.POSTGRES_URL,
+    // optional (only if you set one)
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });
