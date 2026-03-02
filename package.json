@@ -6,7 +6,8 @@
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
     "build": "next build",
     "start": "next start",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "build": "prisma generate && prisma migrate deploy && next build"
 },
   "dependencies": {
     "@prisma/adapter-pg": "^7.4.0",
