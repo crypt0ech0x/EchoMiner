@@ -7,15 +7,37 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24h
-const MIN_REFRESH_INTERVAL_MS = 1500; // 1.5s (server-side anti-spam)
+const MIN_REFRESH_INTERVAL_MS = 1500; // server-side anti-spam
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-// Avoid float drift by rounding to 6 decimals
 function round6(n: number) {
   return Math.round(n * 1_000_000) / 1_000_000;
+}
+
+function shapeResponse(user: any) {
+  return {
+    ok: true,
+    authed: !!user,
+    wallet: {
+      address: user?.wallet?.address ?? null,
+      verified: user?.wallet?.verified ?? false,
+      verifiedAt: user?.wallet?.verifiedAt ? user.wallet.verifiedAt.toISOString() : null,
+    },
+    user: {
+      totalMinedEcho: user?.totalMinedEcho ?? 0,
+    },
+    session: {
+      isActive: user?.miningSession?.isActive ?? false,
+      startedAt: user?.miningSession?.startedAt ? user.miningSession.startedAt.toISOString() : null,
+      lastAccruedAt: user?.miningSession?.lastAccruedAt ? user.miningSession.lastAccruedAt.toISOString() : null,
+      baseRatePerHr: user?.miningSession?.baseRatePerHr ?? 0,
+      multiplier: user?.miningSession?.multiplier ?? 1,
+      sessionMined: user?.miningSession?.sessionMined ?? 0,
+    },
+  };
 }
 
 export async function POST() {
@@ -25,6 +47,7 @@ export async function POST() {
       return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
     }
 
+    // verify wallet from DB (do NOT trust cookie user.wallet)
     const wallet = await prisma.wallet.findFirst({
       where: { userId: authedUser.id },
       select: { verified: true },
@@ -35,47 +58,20 @@ export async function POST() {
 
     const now = new Date();
 
-    const payload = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       const session = await tx.miningSession.findUnique({
         where: { userId: authedUser.id },
       });
 
-      const user = await tx.user.findUnique({
-        where: { id: authedUser.id },
-        select: { totalMinedEcho: true },
-      });
-
-      // No active session
-      if (!session || !session.isActive || !session.startedAt || !session.lastAccruedAt) {
-        return {
-          ok: true,
-          isActive: false,
-          earned: 0,
-          sessionMined: session?.sessionMined ?? 0,
-          totalMinedEcho: user?.totalMinedEcho ?? 0,
-          endsAt: null as Date | null,
-        };
-      }
+      // nothing to accrue
+      if (!session || !session.isActive || !session.startedAt || !session.lastAccruedAt) return;
 
       const endsAt = new Date(session.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
-
-      // If already past end, clamp effective time to endsAt
       const effectiveNow = now > endsAt ? endsAt : now;
 
-      // Anti-spam: if calls are too frequent, do nothing (but keep isActive correct)
       const msSinceLast = effectiveNow.getTime() - session.lastAccruedAt.getTime();
-      if (msSinceLast < MIN_REFRESH_INTERVAL_MS) {
-        return {
-          ok: true,
-          isActive: effectiveNow.getTime() < endsAt.getTime(),
-          earned: 0,
-          sessionMined: session.sessionMined,
-          totalMinedEcho: user?.totalMinedEcho ?? 0,
-          endsAt,
-        };
-      }
+      if (msSinceLast < MIN_REFRESH_INTERVAL_MS) return;
 
-      // Fractional seconds (no floor!)
       const deltaSecondsRaw = msSinceLast / 1000;
       const safeDeltaSeconds = clamp(deltaSecondsRaw, 0, SESSION_DURATION_SECONDS);
 
@@ -93,10 +89,9 @@ export async function POST() {
         },
       });
 
-      const updatedUser = await tx.user.update({
+      await tx.user.update({
         where: { id: authedUser.id },
         data: { totalMinedEcho: { increment: earned } },
-        select: { totalMinedEcho: true },
       });
 
       if (shouldEnd) {
@@ -123,18 +118,15 @@ export async function POST() {
           },
         });
       }
-
-      return {
-        ok: true,
-        isActive: !shouldEnd,
-        earned,
-        sessionMined: shouldEnd ? 0 : updatedSession.sessionMined,
-        totalMinedEcho: updatedUser.totalMinedEcho,
-        endsAt,
-      };
     });
 
-    return NextResponse.json(payload);
+    // After accrual, return the SAME shape as /api/state
+    const freshUser = await prisma.user.findUnique({
+      where: { id: authedUser.id },
+      include: { wallet: true, miningSession: true },
+    });
+
+    return NextResponse.json(shapeResponse(freshUser));
   } catch (err) {
     console.error("mining/refresh error:", err);
     return NextResponse.json({ ok: false, error: "Refresh failed" }, { status: 500 });
