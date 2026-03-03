@@ -10,12 +10,12 @@ export async function POST() {
     await revokeSessionCookie();
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("logout error:", err);
+    console.error("auth/logout error:", err);
     return NextResponse.json({ ok: false, error: "Logout failed" }, { status: 500 });
   }
 }
 
-// Optional: allow hitting it in browser to test quickly
+// Optional: handy for testing in a browser address bar
 export async function GET() {
-  return POST();
+  return NextResponse.json({ ok: true, info: "POST /api/auth/logout to logout." });
 }
