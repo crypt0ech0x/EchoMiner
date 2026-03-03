@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Tab, AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
@@ -14,70 +14,56 @@ import ProfileDrawer from "@/components/ProfileDrawer";
 export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // Local UI clock (so MineTab always animates)
-  const [currentTime, setCurrentTime] = useState(() => Date.now());
-
-  // Keep latest state in a ref so intervals don’t close over stale values
-  const stateRef = useRef<AppState | null>(null);
+  // Smooth UI clock so earnings animate
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
 
-  // 1) Load state once
+  // Initial load
   useEffect(() => {
     let mounted = true;
-
     (async () => {
       try {
         setLoadError(null);
         const s = await EchoAPI.getState();
         if (!mounted) return;
-
         setState(s);
-
-        // If not authed, go to wallet tab
-        if (!s.authed) setActiveTab(Tab.WALLET);
+        if (s.authed === false) setActiveTab(Tab.WALLET);
       } catch (e: any) {
         if (!mounted) return;
         setLoadError(e?.message || "Failed to load state");
       }
     })();
-
     return () => {
       mounted = false;
     };
   }, []);
 
-  // 2) UI clock tick (every 1s)
+  // Server refresh loop (don’t spam)
   useEffect(() => {
-    const id = setInterval(() => setCurrentTime(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+    if (!state?.session?.isActive) return;
 
-  // 3) Refresh loop (only while mining is active)
-  useEffect(() => {
-    const id = setInterval(async () => {
-      const s = stateRef.current;
-      if (!s?.session?.isActive) return;
-
+    const interval = setInterval(async () => {
       try {
         const updated = await EchoAPI.refreshState();
         setState(updated);
       } catch {
-        // Don’t kill UI if refresh fails once
+        // ignore
       }
-    }, 2000);
+    }, 4000);
 
-    return () => clearInterval(id);
-  }, []);
+    return () => clearInterval(interval);
+  }, [state?.session?.isActive]);
 
-  // 4) Compute what MineTab should display:
-  //    server truth + small smoothing since lastAccruedAt
+  const effectiveRatePerSec = state?.session?.effectiveRate ?? 0;
+
+  // What MineTab should display as “+ECHO”
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -86,29 +72,9 @@ export default function EchoMinerApp() {
     const lastAccruedAt = state.session.lastAccruedAt ?? null;
     if (!lastAccruedAt) return base;
 
-    // "effectiveRate" in your UI is per-second
-    const ratePerSec = Number(state.session.effectiveRate ?? 0);
-    if (!Number.isFinite(ratePerSec) || ratePerSec <= 0) return base;
-
-    const deltaSec = Math.max(0, (currentTime - lastAccruedAt) / 1000);
-
-    // Don't let smoothing run away if tab sleeps; cap to 10s of smoothing
-    const smoothed = Math.min(deltaSec, 10) * ratePerSec;
-
-    return base + smoothed;
-  }, [state, currentTime]);
-
-  const effectiveRatePerSec = useMemo(() => {
-    return Number(state?.session?.effectiveRate ?? 0);
-  }, [state]);
-
-  const totalMultiplier = useMemo(() => {
-    if (!state?.session) return 1;
-    const base = Number(state.session.baseRate ?? 0);
-    const eff = Number(state.session.effectiveRate ?? 0);
-    if (!base || base <= 0) return 1;
-    return eff / base;
-  }, [state]);
+    const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
+    return base + deltaSec * effectiveRatePerSec;
+  }, [state?.session?.isActive, state?.session?.sessionMined, state?.session?.lastAccruedAt, now, effectiveRatePerSec]);
 
   if (loadError) {
     return (
@@ -122,7 +88,7 @@ export default function EchoMinerApp() {
               setLoadError(null);
               const s = await EchoAPI.getState();
               setState(s);
-              if (!s.authed) setActiveTab(Tab.WALLET);
+              if (s.authed === false) setActiveTab(Tab.WALLET);
             } catch (e: any) {
               setLoadError(e?.message || "Failed to load state");
             }
@@ -158,11 +124,11 @@ export default function EchoMinerApp() {
           <MineTab
             state={state}
             sessionEarnings={sessionEarnings}
-            onStartSession={async () => setState(await EchoAPI.startSession())}
-            totalMultiplier={totalMultiplier}
             effectiveRate={effectiveRatePerSec}
-            currentTime={currentTime}
+            totalMultiplier={state.session?.baseRate ? state.session.effectiveRate / state.session.baseRate : 1}
+            currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
+            onStartSession={async () => setState(await EchoAPI.startSession())}
           />
         )}
 
@@ -170,7 +136,7 @@ export default function EchoMinerApp() {
           <BoostTab
             state={state}
             onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())}
-            currentTime={currentTime}
+            currentTime={now}
           />
         )}
 
@@ -179,7 +145,12 @@ export default function EchoMinerApp() {
         {activeTab === Tab.WALLET && (
           <WalletTab
             totalMinedEcho={state.user.totalMined}
-            verifiedWalletAddress={state.wallet?.verified ? state.wallet.address : null}
+            walletFromServer={{
+              address: state.wallet.address,
+              verified: state.wallet.verified,
+              verifiedAt: state.wallet.verifiedAt,
+            }}
+            onVerified={async () => setState(await EchoAPI.getState())}
           />
         )}
       </Layout>
