@@ -3,102 +3,48 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromSessionCookie } from "@/lib/auth";
 
-// Build a full AppState that matches lib/types.ts so the UI never crashes
-function buildAppStateFromDb(user: any) {
-  const authed = !!user;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-  const walletAddress = user?.wallet?.address ?? null;
-  const walletVerifiedAt = user?.wallet?.verifiedAt
-    ? new Date(user.wallet.verifiedAt).getTime()
-    : null;
-
-  const totalMined = user?.totalMinedEcho ?? 0;
-
-  // Map DB miningSession -> UI MiningSession
-  const isActive = user?.miningSession?.isActive ?? false;
-  const startedAt = user?.miningSession?.startedAt ? new Date(user.miningSession.startedAt).getTime() : null;
-
-  // Your UI session model expects startTime/endTime/effectiveRate/etc.
-  const baseRatePerHr = user?.miningSession?.baseRatePerHr ?? 0;
-  const multiplier = user?.miningSession?.multiplier ?? 1;
-
-  const effectiveRatePerHr = baseRatePerHr * multiplier;
-
+function shapeResponse(user: any) {
   return {
+    ok: true,
+    authed: !!user,
+    wallet: {
+      address: user?.wallet?.address ?? null,
+      verified: user?.wallet?.verified ?? false,
+      verifiedAt: user?.wallet?.verifiedAt ? user.wallet.verifiedAt.toISOString() : null,
+    },
     user: {
-      id: user?.id ?? "guest",
-      username: user?.username ?? "Guest",
-      balance: 0,
-      totalMined: totalMined,
-      referrals: 0,
-      joinedDate: user?.createdAt ? new Date(user.createdAt).getTime() : Date.now(),
-      guest: !authed,
-      riskScore: 0,
-      referralCode: user?.referralCode ?? "GUEST",
-      isAdmin: false,
-      priorityAirdrop: false,
-      pfpUrl: user?.pfpUrl ?? undefined,
-      email: user?.email ?? undefined,
-      emailVerified: !!user?.emailVerified,
-      notificationPreferences: {
-        session_end: true,
-        streak_grace_warning: true,
-        boost_expired: true,
-        weekly_summary: true,
-        airdrop_announcement: true,
-      },
+      totalMinedEcho: user?.totalMinedEcho ?? 0,
     },
-
-    streak: {
-      currentStreak: 0,
-      lastSessionStartAt: null,
-      lastSessionEndAt: null,
-      graceEndsAt: null,
-    },
-
     session: {
-      id: user?.miningSession?.id ?? "session",
-      isActive,
-      startTime: startedAt,
-      endTime: null,
-      baseRate: baseRatePerHr,
-      streakMultiplier: 1,
-      boostMultiplier: 1,
-      purchaseMultiplier: 1,
-      effectiveRate: effectiveRatePerHr / 3600, // UI seems to treat effectiveRate as “per second” in your math
-      status: isActive ? "active" : "ended",
+      isActive: user?.miningSession?.isActive ?? false,
+      startedAt: user?.miningSession?.startedAt ? user.miningSession.startedAt.toISOString() : null,
+      lastAccruedAt: user?.miningSession?.lastAccruedAt ? user.miningSession.lastAccruedAt.toISOString() : null,
+      baseRatePerHr: user?.miningSession?.baseRatePerHr ?? 0,
+      multiplier: user?.miningSession?.multiplier ?? 1,
+      sessionMined: user?.miningSession?.sessionMined ?? 0,
     },
-
-    activeBoosts: [],
-    ledger: [],
-    purchaseHistory: [],
-    notifications: [],
-
-    walletAddress,
-    walletVerifiedAt,
-    currentNonce: null,
   };
 }
 
-async function getStateInternal() {
+async function getState() {
   const authedUser = await getUserFromSessionCookie();
-  if (!authedUser) return buildAppStateFromDb(null);
+  if (!authedUser) return shapeResponse(null);
 
   const user = await prisma.user.findUnique({
     where: { id: authedUser.id },
     include: { wallet: true, miningSession: true },
   });
 
-  return buildAppStateFromDb(user);
+  return shapeResponse(user);
 }
 
 export async function GET() {
-  const state = await getStateInternal();
-  return NextResponse.json(state);
+  return NextResponse.json(await getState());
 }
 
 export async function POST() {
-  // Keep POST so old clients don’t 405
-  const state = await getStateInternal();
-  return NextResponse.json(state);
+  return NextResponse.json(await getState());
 }
