@@ -11,10 +11,6 @@ function newSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-/**
- * Creates a DB session row and sets the HttpOnly cookie.
- * Call this after wallet verification succeeds.
- */
 export async function createSessionForUser(
   userId: string,
   opts?: { maxAgeSeconds?: number }
@@ -28,7 +24,6 @@ export async function createSessionForUser(
     data: { id: sessionId, userId, expiresAt },
   });
 
-  // In your Next.js environment, cookies() is async
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, sessionId, {
     httpOnly: true,
@@ -41,10 +36,6 @@ export async function createSessionForUser(
   return { sessionId, expiresAt };
 }
 
-/**
- * Deletes cookie AND revokes the DB session (so it can't be reused).
- * Use this in /api/auth/logout.
- */
 export async function revokeSessionCookie() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
@@ -59,10 +50,6 @@ export async function revokeSessionCookie() {
   cookieStore.delete(COOKIE_NAME);
 }
 
-/**
- * Reads cookie -> validates session in DB -> returns the user (with wallet)
- * Used by /api/state and mining routes.
- */
 export async function getUserFromSessionCookie() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
