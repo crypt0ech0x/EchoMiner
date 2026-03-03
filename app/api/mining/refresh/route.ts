@@ -6,12 +6,14 @@ import { getUserFromSessionCookie } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SESSION_DURATION_SECONDS = 60 * 60 * 24; // ✅ 24 hours
-const MIN_REFRESH_INTERVAL_SECONDS = 2;
+const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24h
+const MIN_REFRESH_INTERVAL_MS = 1500; // 1.5s (server-side anti-spam)
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
+
+// Avoid float drift by rounding to 6 decimals
 function round6(n: number) {
   return Math.round(n * 1_000_000) / 1_000_000;
 }
@@ -19,24 +21,31 @@ function round6(n: number) {
 export async function POST() {
   try {
     const authedUser = await getUserFromSessionCookie();
-    if (!authedUser) return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+    if (!authedUser) {
+      return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
+    }
 
     const wallet = await prisma.wallet.findFirst({
       where: { userId: authedUser.id },
       select: { verified: true },
     });
-    if (!wallet?.verified) return NextResponse.json({ ok: false, error: "Wallet not verified" }, { status: 401 });
+    if (!wallet?.verified) {
+      return NextResponse.json({ ok: false, error: "Wallet not verified" }, { status: 401 });
+    }
 
     const now = new Date();
 
     const payload = await prisma.$transaction(async (tx) => {
-      const session = await tx.miningSession.findUnique({ where: { userId: authedUser.id } });
+      const session = await tx.miningSession.findUnique({
+        where: { userId: authedUser.id },
+      });
 
       const user = await tx.user.findUnique({
         where: { id: authedUser.id },
         select: { totalMinedEcho: true },
       });
 
+      // No active session
       if (!session || !session.isActive || !session.startedAt || !session.lastAccruedAt) {
         return {
           ok: true,
@@ -48,13 +57,17 @@ export async function POST() {
         };
       }
 
-      const secondsSinceLast = Math.floor((now.getTime() - session.lastAccruedAt.getTime()) / 1000);
       const endsAt = new Date(session.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
-      if (secondsSinceLast < MIN_REFRESH_INTERVAL_SECONDS) {
+      // If already past end, clamp effective time to endsAt
+      const effectiveNow = now > endsAt ? endsAt : now;
+
+      // Anti-spam: if calls are too frequent, do nothing (but keep isActive correct)
+      const msSinceLast = effectiveNow.getTime() - session.lastAccruedAt.getTime();
+      if (msSinceLast < MIN_REFRESH_INTERVAL_MS) {
         return {
           ok: true,
-          isActive: true,
+          isActive: effectiveNow.getTime() < endsAt.getTime(),
           earned: 0,
           sessionMined: session.sessionMined,
           totalMinedEcho: user?.totalMinedEcho ?? 0,
@@ -62,10 +75,9 @@ export async function POST() {
         };
       }
 
-      const effectiveNow = now > endsAt ? endsAt : now;
-
-      const deltaSeconds = Math.floor((effectiveNow.getTime() - session.lastAccruedAt.getTime()) / 1000);
-      const safeDeltaSeconds = clamp(deltaSeconds, 0, SESSION_DURATION_SECONDS);
+      // Fractional seconds (no floor!)
+      const deltaSecondsRaw = msSinceLast / 1000;
+      const safeDeltaSeconds = clamp(deltaSecondsRaw, 0, SESSION_DURATION_SECONDS);
 
       const ratePerSec = (session.baseRatePerHr * session.multiplier) / 3600;
       const earned = round6(Math.max(0, safeDeltaSeconds * ratePerSec));
