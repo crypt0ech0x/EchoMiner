@@ -18,18 +18,14 @@ model User {
 
   email String? @unique
 
-  // server truth
-  totalMinedEcho     Float @default(0)
-  totalPurchasedEcho Float @default(0)
+  totalMinedEcho Float @default(0)
 
   wallet        Wallet?
   miningSession MiningSession?
   miningHistory MiningHistory[]
   sessions      Session[]
-  purchases     Purchase[]
 
   @@index([totalMinedEcho])
-  @@index([totalPurchasedEcho])
 }
 
 // ==============================
@@ -49,7 +45,7 @@ model Wallet {
 }
 
 // ==============================
-// WALLET NONCE (signature challenge)
+// WALLET NONCE (for signature challenge)
 // ==============================
 model WalletNonce {
   id        String   @id @default(cuid())
@@ -108,38 +104,15 @@ model MiningHistory {
 }
 
 // ==============================
-// PURCHASES (STORE)
-// ==============================
-model Purchase {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // what was bought
-  itemId     String
-  echoAmount Float  @default(0)
-
-  // Stripe/session tracking (even if you’re simulating now)
-  provider        String  @default("stripe")
-  providerRef     String? @unique  // stripe session id, payment intent id, etc
-  status          String  @default("succeeded") // pending|succeeded|failed
-
-  @@index([userId])
-  @@index([createdAt])
-}
-
-// ==============================
-// AUTH SESSION COOKIE
+// AUTH SESSIONS (COOKIE LOGIN)
 // ==============================
 model Session {
-  id        String   @id @default(cuid())
+  id        String   @id              // <-- hex id from crypto.randomBytes
   createdAt DateTime @default(now())
   expiresAt DateTime
 
   userId String
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   revokedAt DateTime?
 
