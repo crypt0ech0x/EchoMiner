@@ -1,12 +1,10 @@
+// prisma.config.ts
 import "dotenv/config";
-import { defineConfig } from "prisma/config";
+import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
   datasource: {
-    url:
-      process.env.DATABASE_URL ??
-      process.env.POSTGRES_URL ??
-      process.env.POSTGRES_PRISMA_URL ??
-      "",
+    // Must be a DIRECT Postgres URL (not prisma+postgres)
+    url: env("DATABASE_URL"),
   },
 });
