@@ -10,15 +10,12 @@ function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
-function parseAdminWallets(): Set<string> {
-  const raw = (process.env.ADMIN_WALLETS || "").trim();
-  if (!raw) return new Set();
-  return new Set(
-    raw
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-  );
+function getAdminWalletAllowlist(): string[] {
+  const raw = process.env.ADMIN_WALLETS || "";
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export async function GET() {
@@ -26,85 +23,74 @@ export async function GET() {
     const authed = await getUserFromSessionCookie();
     if (!authed) return json({ ok: false, error: "Not logged in" }, 401);
 
-    // Load my wallet so we can authorize via wallet allowlist
-    const me = await prisma.user.findUnique({
-      where: { id: authed.id },
-      select: {
-        id: true,
-        wallet: { select: { address: true, verified: true } },
-      },
+    const allowlist = getAdminWalletAllowlist();
+
+    // Load my wallet address
+    const myWallet = await prisma.wallet.findFirst({
+      where: { userId: authed.id },
+      select: { address: true },
     });
 
-    const adminWallets = parseAdminWallets();
-    const myAddr = me?.wallet?.address ?? null;
-
-    if (!myAddr || adminWallets.size === 0 || !adminWallets.has(myAddr)) {
-      return json(
-        {
-          ok: false,
-          error:
-            "Forbidden. Set ADMIN_WALLETS in env (comma-separated base58 addresses).",
-        },
-        403
-      );
+    // If allowlist is set, enforce it
+    if (allowlist.length > 0) {
+      const addr = myWallet?.address || "";
+      if (!addr || !allowlist.includes(addr)) {
+        return json({ ok: false, error: "Forbidden" }, 403);
+      }
     }
 
-    // Pull the core rows we need (lean)
+    // Pull users + wallet + mining info
+    // Purchases intentionally redacted for now.
     const users = await prisma.user.findMany({
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        createdAt: true,
-        totalMinedEcho: true,
-        wallet: { select: { address: true, verified: true, verifiedAt: true } },
+      include: {
+        wallet: true,
+        miningHistory: {
+          orderBy: { createdAt: "asc" },
+          take: 1, // first session
+        },
+        // For "most recent session", we’ll query again using desc take 1:
+        // (Prisma can’t do two different orders in one include)
       },
+      orderBy: { createdAt: "desc" },
+      take: 200,
     });
 
-    // Enrich with first/last mining session + total purchases (if Purchase exists)
-    const rows = await Promise.all(
-      users.map(async (u) => {
-        const [firstMine, lastMine, purchaseAgg] = await Promise.all([
-          prisma.miningHistory.findFirst({
-            where: { userId: u.id },
-            orderBy: { createdAt: "asc" },
-            select: { createdAt: true, startedAt: true, endedAt: true, totalMined: true },
-          }),
-          prisma.miningHistory.findFirst({
-            where: { userId: u.id },
-            orderBy: { createdAt: "desc" },
-            select: { createdAt: true, startedAt: true, endedAt: true, totalMined: true },
-          }),
-          prisma.purchase.aggregate({
-            where: { userId: u.id },
-            _sum: { amountEcho: true },
-          }),
-        ]);
+    const ids = users.map((u) => u.id);
 
-        const totalPurchasedEcho = Number(purchaseAgg._sum.amountEcho ?? 0);
-        const totalMinedEcho = Number(u.totalMinedEcho ?? 0);
+    const mostRecentByUser = await prisma.miningHistory.findMany({
+      where: { userId: { in: ids } },
+      orderBy: { createdAt: "desc" },
+      distinct: ["userId"],
+    });
 
-        return {
-          userId: u.id,
-          walletAddress: u.wallet?.address ?? null,
-          walletVerified: !!u.wallet?.verified,
-          walletVerifiedAt: u.wallet?.verifiedAt ? u.wallet.verifiedAt.toISOString() : null,
+    const recentMap = new Map<string, (typeof mostRecentByUser)[number]>();
+    for (const row of mostRecentByUser) recentMap.set(row.userId, row);
 
-          totalMinedEcho,
-          totalPurchasedEcho,
-          totalEcho: totalMinedEcho + totalPurchasedEcho,
+    const rows = users.map((u) => {
+      const first = u.miningHistory?.[0] ?? null;
+      const recent = recentMap.get(u.id) ?? null;
 
-          firstMiningSessionAt: firstMine?.startedAt ? firstMine.startedAt.toISOString() : null,
-          mostRecentMiningSessionAt: lastMine?.startedAt ? lastMine.startedAt.toISOString() : null,
+      const walletAddress = u.wallet?.address ?? null;
 
-          // optional: useful for sanity
-          userCreatedAt: u.createdAt.toISOString(),
-        };
-      })
-    );
+      const totalMinedEcho = u.totalMinedEcho ?? 0;
+
+      // Purchases redacted: totalPurchasedEcho = 0 for now
+      const totalPurchasedEcho = 0;
+
+      return {
+        userId: u.id,
+        walletAddress,
+        totalMinedEcho,
+        totalPurchasedEcho,
+        totalEcho: totalMinedEcho + totalPurchasedEcho,
+        firstMiningSessionAt: first?.startedAt ?? null,
+        mostRecentMiningSessionAt: recent?.startedAt ?? null,
+      };
+    });
 
     return json({ ok: true, rows });
-  } catch (err: any) {
-    console.error("admin/overview error:", err);
+  } catch (e) {
+    console.error("admin/overview error:", e);
     return json({ ok: false, error: "Admin overview failed" }, 500);
   }
 }
