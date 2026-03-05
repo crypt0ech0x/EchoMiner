@@ -11,6 +11,18 @@ function newSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 
+// IMPORTANT: set cookie domain in prod so www/apex share the same session
+function cookieDomain() {
+  // Option A: explicit env var (recommended)
+  if (process.env.COOKIE_DOMAIN) return process.env.COOKIE_DOMAIN;
+
+  // Option B: if your custom domain is echominer.fun, this covers www + apex
+  if (process.env.NODE_ENV === "production") return ".echominer.fun";
+
+  // local dev: no domain
+  return undefined;
+}
+
 export async function createSessionForUser(
   userId: string,
   opts?: { maxAgeSeconds?: number }
@@ -31,6 +43,7 @@ export async function createSessionForUser(
     sameSite: "lax",
     path: "/",
     maxAge: maxAgeSeconds,
+    domain: cookieDomain(),
   });
 
   return { sessionId, expiresAt };
@@ -47,7 +60,12 @@ export async function revokeSessionCookie() {
     });
   }
 
-  cookieStore.delete(COOKIE_NAME);
+  // Delete with same options you set with (domain/path must match)
+  cookieStore.delete({
+    name: COOKIE_NAME,
+    path: "/",
+    domain: cookieDomain(),
+  });
 }
 
 export async function getUserFromSessionCookie() {
@@ -58,9 +76,7 @@ export async function getUserFromSessionCookie() {
   const session = await prisma.session.findUnique({
     where: { id: sessionId },
     include: {
-      user: {
-        include: { wallet: true },
-      },
+      user: { include: { wallet: true } },
     },
   });
 
