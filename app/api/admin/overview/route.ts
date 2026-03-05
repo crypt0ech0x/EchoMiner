@@ -10,67 +10,100 @@ function json(data: any, status = 200) {
   return NextResponse.json(data, { status });
 }
 
+function parseAdminWallets(): Set<string> {
+  const raw = (process.env.ADMIN_WALLETS || "").trim();
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+  );
+}
+
 export async function GET() {
   try {
     const authed = await getUserFromSessionCookie();
     if (!authed) return json({ ok: false, error: "Not logged in" }, 401);
 
-    // Basic admin gate (adjust if your User model uses a different field)
+    // Load my wallet so we can authorize via wallet allowlist
     const me = await prisma.user.findUnique({
       where: { id: authed.id },
-      select: { id: true, isAdmin: true },
+      select: {
+        id: true,
+        wallet: { select: { address: true, verified: true } },
+      },
     });
 
-    if (!me?.isAdmin) return json({ ok: false, error: "Forbidden" }, 403);
+    const adminWallets = parseAdminWallets();
+    const myAddr = me?.wallet?.address ?? null;
 
-    // Pull users + wallet + miningHistory summary (no purchases for now)
+    if (!myAddr || adminWallets.size === 0 || !adminWallets.has(myAddr)) {
+      return json(
+        {
+          ok: false,
+          error:
+            "Forbidden. Set ADMIN_WALLETS in env (comma-separated base58 addresses).",
+        },
+        403
+      );
+    }
+
+    // Pull the core rows we need (lean)
     const users = await prisma.user.findMany({
+      orderBy: { createdAt: "desc" },
       select: {
         id: true,
         createdAt: true,
         totalMinedEcho: true,
-        wallet: {
-          select: { address: true, verified: true, verifiedAt: true },
-        },
-        miningHistory: {
-          select: { startedAt: true, endedAt: true, totalMined: true, createdAt: true },
-          orderBy: { startedAt: "asc" },
-        },
+        wallet: { select: { address: true, verified: true, verifiedAt: true } },
       },
-      orderBy: { createdAt: "desc" },
-      take: 250, // keep it sane; add pagination later if you want
     });
 
-    const rows = users.map((u) => {
-      const histories = u.miningHistory ?? [];
-      const first = histories[0]?.startedAt ?? null;
-      const last = histories.length ? histories[histories.length - 1]?.startedAt ?? null : null;
+    // Enrich with first/last mining session + total purchases (if Purchase exists)
+    const rows = await Promise.all(
+      users.map(async (u) => {
+        const [firstMine, lastMine, purchaseAgg] = await Promise.all([
+          prisma.miningHistory.findFirst({
+            where: { userId: u.id },
+            orderBy: { createdAt: "asc" },
+            select: { createdAt: true, startedAt: true, endedAt: true, totalMined: true },
+          }),
+          prisma.miningHistory.findFirst({
+            where: { userId: u.id },
+            orderBy: { createdAt: "desc" },
+            select: { createdAt: true, startedAt: true, endedAt: true, totalMined: true },
+          }),
+          prisma.purchase.aggregate({
+            where: { userId: u.id },
+            _sum: { amountEcho: true },
+          }),
+        ]);
 
-      const totalSessions = histories.length;
+        const totalPurchasedEcho = Number(purchaseAgg._sum.amountEcho ?? 0);
+        const totalMinedEcho = Number(u.totalMinedEcho ?? 0);
 
-      const totalMined = Number(u.totalMinedEcho ?? 0);
+        return {
+          userId: u.id,
+          walletAddress: u.wallet?.address ?? null,
+          walletVerified: !!u.wallet?.verified,
+          walletVerifiedAt: u.wallet?.verifiedAt ? u.wallet.verifiedAt.toISOString() : null,
 
-      // Purchases redacted for now (keep field so UI doesn't change later)
-      const totalPurchased = 0;
+          totalMinedEcho,
+          totalPurchasedEcho,
+          totalEcho: totalMinedEcho + totalPurchasedEcho,
 
-      return {
-        userId: u.id,
-        walletAddress: u.wallet?.address ?? null,
-        walletVerified: !!u.wallet?.verified,
-        walletVerifiedAt: u.wallet?.verifiedAt ? u.wallet.verifiedAt.toISOString() : null,
+          firstMiningSessionAt: firstMine?.startedAt ? firstMine.startedAt.toISOString() : null,
+          mostRecentMiningSessionAt: lastMine?.startedAt ? lastMine.startedAt.toISOString() : null,
 
-        totalMinedEcho: totalMined,
-        totalPurchasedEcho: totalPurchased,
-        totalEcho: totalMined + totalPurchased,
-
-        firstMiningAt: first ? first.toISOString() : null,
-        lastMiningAt: last ? last.toISOString() : null,
-        totalSessions,
-      };
-    });
+          // optional: useful for sanity
+          userCreatedAt: u.createdAt.toISOString(),
+        };
+      })
+    );
 
     return json({ ok: true, rows });
-  } catch (err) {
+  } catch (err: any) {
     console.error("admin/overview error:", err);
     return json({ ok: false, error: "Admin overview failed" }, 500);
   }
