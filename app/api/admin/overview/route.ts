@@ -6,16 +6,25 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function json(data: any, status = 200) {
-  return NextResponse.json(data, { status });
+  return NextResponse.json(data, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    },
+  });
 }
 
 function unauthorized() {
-  // This header is what triggers the browser login prompt for Basic Auth.
   return new NextResponse(JSON.stringify({ ok: false, error: "Not logged in" }), {
     status: 401,
     headers: {
       "Content-Type": "application/json",
       "WWW-Authenticate": 'Basic realm="EchoMiner Admin", charset="UTF-8"',
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
     },
   });
 }
@@ -39,35 +48,20 @@ function parseBasicAuth(req: NextRequest) {
 
 function isAuthed(req: NextRequest) {
   const creds = parseBasicAuth(req);
-  const u = process.env.ADMIN_USER || "";
-  const p = process.env.ADMIN_PASS || "";
-  if (!u || !p) {
-    // If you prefer hard-fail when envs are missing, return false here.
-    // But this makes it obvious why it isn't working:
-    return false;
-  }
-  return !!creds && creds.user === u && creds.pass === p;
+  const ADMIN_USER = process.env.ADMIN_USER || "";
+  const ADMIN_PASS = process.env.ADMIN_PASS || "";
+
+  if (!ADMIN_USER || !ADMIN_PASS) return false;
+  return !!creds && creds.user === ADMIN_USER && creds.pass === ADMIN_PASS;
 }
 
-/**
- * What we return (clean + minimal):
- * - wallet address
- * - total mined echo
- * - total purchased echo (redacted for now => 0)
- * - total echo
- * - first mining session time
- * - most recent mining session time
- */
 export async function GET(req: NextRequest) {
   try {
-    // Optional: support redirect bootstrap to trigger login prompt in the browser.
-    // Example: /api/admin/overview?redirect=/admin/db
     const redirect = req.nextUrl.searchParams.get("redirect");
 
     if (!isAuthed(req)) return unauthorized();
 
     if (redirect) {
-      // Once authed, bounce back to the admin page
       return NextResponse.redirect(new URL(redirect, req.url));
     }
 
@@ -75,56 +69,98 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: "desc" },
       include: {
         wallet: true,
+        miningSession: true,
       },
     });
 
-    // Pull mining history in a way that works even if users have none yet.
-    // We do 2 lightweight queries per user (first + latest). Fine for admin.
     const rows = await Promise.all(
       users.map(async (u) => {
-        const walletAddress = u.wallet?.address ?? null;
-
-        const latest = await prisma.miningHistory.findFirst({
-          where: { userId: u.id },
-          orderBy: { startedAt: "desc" },
-          select: { startedAt: true, endedAt: true, totalMined: true },
-        });
-
-        const first = await prisma.miningHistory.findFirst({
+        const firstMine = await prisma.miningHistory.findFirst({
           where: { userId: u.id },
           orderBy: { startedAt: "asc" },
-          select: { startedAt: true },
+          select: {
+            startedAt: true,
+            endedAt: true,
+            totalMined: true,
+          },
+        });
+
+        const lastMine = await prisma.miningHistory.findFirst({
+          where: { userId: u.id },
+          orderBy: { startedAt: "desc" },
+          select: {
+            startedAt: true,
+            endedAt: true,
+            totalMined: true,
+          },
         });
 
         const totalMinedEcho = Number(u.totalMinedEcho ?? 0);
-
-        // Purchases are redacted for now
-        const totalPurchasedEcho = 0;
-
+        const totalPurchasedEcho = 0; // redacted for now
         const totalEcho = totalMinedEcho + totalPurchasedEcho;
+
+        const baseRatePerHr = Number(u.miningSession?.baseRatePerHr ?? 0);
+        const multiplier = Number(u.miningSession?.multiplier ?? 1);
+        const effectiveRatePerSec =
+          baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
 
         return {
           userId: u.id,
-          walletAddress,
+          walletAddress: u.wallet?.address ?? null,
+          walletVerified: !!u.wallet?.verified,
+          walletVerifiedAt: u.wallet?.verifiedAt
+            ? u.wallet.verifiedAt.toISOString()
+            : null,
+
           totalMinedEcho,
           totalPurchasedEcho,
           totalEcho,
-          firstMiningAt: first?.startedAt ? first.startedAt.toISOString() : null,
-          lastMiningAt: latest?.startedAt ? latest.startedAt.toISOString() : null,
-          lastSessionMined: latest?.totalMined != null ? Number(latest.totalMined) : null,
-          lastSessionEndedAt: latest?.endedAt ? latest.endedAt.toISOString() : null,
+
+          // live session fields
+          sessionIsActive: !!u.miningSession?.isActive,
+          sessionStartedAt: u.miningSession?.startedAt
+            ? u.miningSession.startedAt.toISOString()
+            : null,
+          sessionLastAccruedAt: u.miningSession?.lastAccruedAt
+            ? u.miningSession.lastAccruedAt.toISOString()
+            : null,
+          sessionMined: Number(u.miningSession?.sessionMined ?? 0),
+          baseRatePerHr,
+          multiplier,
+          effectiveRatePerSec,
+
+          firstMiningAt: firstMine?.startedAt
+            ? firstMine.startedAt.toISOString()
+            : null,
+          lastMiningAt: lastMine?.startedAt
+            ? lastMine.startedAt.toISOString()
+            : null,
+          lastSessionEndedAt: lastMine?.endedAt
+            ? lastMine.endedAt.toISOString()
+            : null,
+          lastSessionMined:
+            lastMine?.totalMined != null ? Number(lastMine.totalMined) : null,
+
           createdAt: u.createdAt.toISOString(),
         };
       })
     );
 
+    const totals = {
+      wallets: rows.length,
+      activeSessions: rows.filter((r) => r.sessionIsActive).length,
+      totalMinedEcho: rows.reduce((sum, r) => sum + r.totalMinedEcho, 0),
+      totalPurchasedEcho: rows.reduce((sum, r) => sum + r.totalPurchasedEcho, 0),
+      totalEcho: rows.reduce((sum, r) => sum + r.totalEcho, 0),
+    };
+
     return json({
       ok: true,
-      count: rows.length,
-      rows,
       generatedAt: new Date().toISOString(),
+      totals,
+      rows,
     });
-  } catch (err: any) {
+  } catch (err) {
     console.error("admin/overview error:", err);
     return json({ ok: false, error: "Admin overview failed" }, 500);
   }
