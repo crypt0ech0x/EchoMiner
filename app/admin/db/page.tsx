@@ -1,3 +1,4 @@
+// app/admin/db/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -9,15 +10,16 @@ type Row = {
   walletVerifiedAt: string | null;
 
   totalMinedEcho: number;
+  liveTotalMinedEcho: number;
   totalPurchasedEcho: number;
   totalEcho: number;
 
   sessionIsActive: boolean;
   sessionStartedAt: string | null;
   sessionLastAccruedAt: string | null;
+  sessionEndsAt: string | null;
   sessionMined: number;
-  baseRatePerHr: number;
-  multiplier: number;
+  liveSessionMining: number;
   effectiveRatePerSec: number;
 
   firstMiningAt: string | null;
@@ -32,6 +34,7 @@ type Totals = {
   wallets: number;
   activeSessions: number;
   totalMinedEcho: number;
+  liveTotalMinedEcho: number;
   totalPurchasedEcho: number;
   totalEcho: number;
 };
@@ -64,7 +67,7 @@ function fmtDate(s: string | null) {
 
 function shortAddr(addr: string | null) {
   if (!addr) return "—";
-  if (addr.length <= 14) return addr;
+  if (addr.length <= 16) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-6)}`;
 }
 
@@ -75,14 +78,8 @@ export default function AdminDbPage() {
 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
 
   const POLL_MS = 2000;
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(t);
-  }, []);
 
   async function load() {
     try {
@@ -131,36 +128,16 @@ export default function AdminDbPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const liveRows = useMemo(() => {
-    return rows.map((r) => {
-      if (!r.sessionIsActive || !r.sessionLastAccruedAt || r.effectiveRatePerSec <= 0) {
-        return {
-          ...r,
-          liveSessionMining: r.sessionMined,
-        };
-      }
-
-      const last = new Date(r.sessionLastAccruedAt).getTime();
-      const deltaSec = Math.max(0, (now - last) / 1000);
-      const liveSessionMining = r.sessionMined + deltaSec * r.effectiveRatePerSec;
-
-      return {
-        ...r,
-        liveSessionMining,
-      };
-    });
-  }, [rows, now]);
-
   const displayTotals = useMemo(() => {
-    const activeLive = liveRows.filter((r) => r.sessionIsActive).length;
     return {
-      wallets: totals?.wallets ?? liveRows.length,
-      activeSessions: activeLive,
+      wallets: totals?.wallets ?? rows.length,
+      activeSessions: totals?.activeSessions ?? rows.filter((r) => r.sessionIsActive).length,
       totalMinedEcho: totals?.totalMinedEcho ?? 0,
+      liveTotalMinedEcho: totals?.liveTotalMinedEcho ?? 0,
       totalPurchasedEcho: totals?.totalPurchasedEcho ?? 0,
       totalEcho: totals?.totalEcho ?? 0,
     };
-  }, [totals, liveRows]);
+  }, [totals, rows]);
 
   return (
     <div className="min-h-screen bg-background text-white px-5 py-6">
@@ -169,7 +146,7 @@ export default function AdminDbPage() {
           <div>
             <h1 className="text-2xl font-black tracking-tight">Admin DB</h1>
             <p className="text-white/50 text-sm">
-              Live session mining for every wallet
+              Totals now match the live Mine home screen
             </p>
             <p className="text-white/30 text-xs mt-1">
               Last API update: {generatedAt ? fmtDate(generatedAt) : "—"} • Polling every {POLL_MS / 1000}s
@@ -202,7 +179,7 @@ export default function AdminDbPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
             <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Wallets</div>
             <div className="text-xl font-black">{displayTotals.wallets}</div>
@@ -214,8 +191,13 @@ export default function AdminDbPage() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
-            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Total Mined</div>
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Settled Mined</div>
             <div className="text-xl font-black">{fmt(displayTotals.totalMinedEcho)}</div>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Live Mined</div>
+            <div className="text-xl font-black text-teal-300">{fmt(displayTotals.liveTotalMinedEcho)}</div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
@@ -236,29 +218,29 @@ export default function AdminDbPage() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="min-w-[1300px] w-full text-sm">
+            <table className="min-w-[1500px] w-full text-sm">
               <thead className="bg-white/[0.03]">
                 <tr className="text-left">
                   <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Wallet</th>
-                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Live Session Mining</th>
-                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Session Mined (DB)</th>
-                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Rate / sec</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Live Session</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Settled Total</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Live Total</th>
                   <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Active</th>
-                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Total Mined</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Ends At</th>
                   <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">First Session</th>
                   <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Most Recent</th>
                 </tr>
               </thead>
 
               <tbody>
-                {liveRows.length === 0 ? (
+                {rows.length === 0 ? (
                   <tr>
                     <td className="px-4 py-8 text-white/50" colSpan={8}>
                       No rows (or not authenticated yet).
                     </td>
                   </tr>
                 ) : (
-                  liveRows.map((r) => (
+                  rows.map((r) => (
                     <tr key={r.userId} className="border-t border-white/5">
                       <td className="px-4 py-3 font-mono text-xs">
                         <span title={r.walletAddress ?? ""}>{shortAddr(r.walletAddress)}</span>
@@ -269,11 +251,11 @@ export default function AdminDbPage() {
                       </td>
 
                       <td className="px-4 py-3 font-black tabular-nums">
-                        {fmt(r.sessionMined || 0)}
+                        {fmt(r.totalMinedEcho || 0)}
                       </td>
 
-                      <td className="px-4 py-3 font-mono text-xs">
-                        {fmt(r.effectiveRatePerSec || 0, 8)}
+                      <td className="px-4 py-3 font-black tabular-nums text-teal-300">
+                        {fmt(r.liveTotalMinedEcho || 0)}
                       </td>
 
                       <td className="px-4 py-3">
@@ -288,10 +270,7 @@ export default function AdminDbPage() {
                         )}
                       </td>
 
-                      <td className="px-4 py-3 font-black tabular-nums">
-                        {fmt(r.totalMinedEcho || 0)}
-                      </td>
-
+                      <td className="px-4 py-3 text-white/70">{fmtDate(r.sessionEndsAt)}</td>
                       <td className="px-4 py-3 text-white/70">{fmtDate(r.firstMiningAt)}</td>
                       <td className="px-4 py-3 text-white/70">{fmtDate(r.lastMiningAt)}</td>
                     </tr>
@@ -302,8 +281,7 @@ export default function AdminDbPage() {
           </div>
 
           <div className="px-4 py-3 border-t border-white/10 text-[11px] text-white/40">
-            Live Session Mining mirrors the Mine home screen formula:
-            sessionMined + ((now - lastAccruedAt) * effectiveRatePerSec).
+            Settled Total = DB `totalMinedEcho`. Live Total = Settled Total + Live Session Mining, which matches the Mine home screen display.  [oai_citation:2‡GitHub](https://raw.githubusercontent.com/crypt0ech0x/EchoMiner/main/app/page.tsx)
           </div>
         </div>
       </div>
