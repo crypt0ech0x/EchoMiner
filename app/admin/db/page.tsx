@@ -1,4 +1,3 @@
-// app/admin/db/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -29,17 +28,19 @@ type Row = {
   createdAt: string;
 };
 
+type Totals = {
+  wallets: number;
+  activeSessions: number;
+  totalMinedEcho: number;
+  totalPurchasedEcho: number;
+  totalEcho: number;
+};
+
 type OverviewResponse =
   | {
       ok: true;
       generatedAt: string;
-      totals: {
-        wallets: number;
-        activeSessions: number;
-        totalMinedEcho: number;
-        totalPurchasedEcho: number;
-        totalEcho: number;
-      };
+      totals: Totals;
       rows: Row[];
     }
   | {
@@ -69,7 +70,7 @@ function shortAddr(addr: string | null) {
 
 export default function AdminDbPage() {
   const [rows, setRows] = useState<Row[]>([]);
-  const [totals, setTotals] = useState<OverviewResponse extends { ok: true; totals: infer T } ? T : never | null>(null);
+  const [totals, setTotals] = useState<Totals | null>(null);
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -141,8 +142,6 @@ export default function AdminDbPage() {
 
       const last = new Date(r.sessionLastAccruedAt).getTime();
       const deltaSec = Math.max(0, (now - last) / 1000);
-
-      // same smoothing idea as home screen
       const liveSessionMining = r.sessionMined + deltaSec * r.effectiveRatePerSec;
 
       return {
@@ -200,9 +199,6 @@ export default function AdminDbPage() {
           <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4">
             <div className="font-black text-red-200">Admin overview failed</div>
             <div className="text-sm text-red-100/80 mt-1">{err}</div>
-            <div className="text-xs text-red-100/60 mt-3">
-              Tap <b>Authenticate</b> to trigger the admin login prompt.
-            </div>
           </div>
         )}
 
