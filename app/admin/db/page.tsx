@@ -1,162 +1,226 @@
 // app/admin/db/page.tsx
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 type Row = {
   userId: string;
   walletAddress: string | null;
-  walletVerified: boolean;
   totalMinedEcho: number;
-  firstSeen: string;
-  activeSession: boolean;
-  lastSessionStart: string | null;
-  lastSessionEnd: string | null;
+  totalPurchasedEcho: number;
+  totalEcho: number;
+  firstMiningAt: string | null;
+  lastMiningAt: string | null;
+  lastSessionMined: number | null;
+  lastSessionEndedAt: string | null;
+  createdAt: string;
 };
+
+type OverviewResponse =
+  | { ok: true; count: number; rows: Row[]; generatedAt: string }
+  | { ok: false; error: string };
+
+function fmt(n: number) {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function fmtDate(s: string | null) {
+  if (!s) return "—";
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
+}
 
 export default function AdminDbPage() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // login state
-  const [needLogin, setNeedLogin] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [err, setErr] = useState<string | null>(null);
 
   async function load() {
-    setLoading(true);
-    setError(null);
-    setNeedLogin(false);
+    setErr(null);
+    try {
+      const res = await fetch("/api/admin/overview", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
 
-    const res = await fetch("/api/admin/overview", {
-      method: "GET",
-      credentials: "include",
-      cache: "no-store",
-    });
+      // If not authed, the API returns 401 with WWW-Authenticate.
+      // fetch() *sometimes* won't show the browser prompt. We'll show a UI button instead.
+      if (res.status === 401) {
+        const txt = await res.text().catch(() => "");
+        setErr(txt || "Not logged in");
+        setRows([]);
+        setGeneratedAt(null);
+        return;
+      }
 
-    const data = await res.json().catch(() => ({}));
+      const data = (await res.json()) as OverviewResponse;
+      if (!data || data.ok !== true) {
+        setErr((data as any)?.error || "Admin overview failed");
+        setRows([]);
+        setGeneratedAt(null);
+        return;
+      }
 
-    if (res.status === 401) {
-      setNeedLogin(true);
+      setRows(data.rows);
+      setGeneratedAt(data.generatedAt);
+    } catch (e: any) {
+      setErr(e?.message || "Admin overview failed");
+      setRows([]);
+      setGeneratedAt(null);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!res.ok) {
-      setError(data?.error || "Admin overview failed");
-      setLoading(false);
-      return;
-    }
-
-    setRows(data.rows || []);
-    setLoading(false);
-  }
-
-  async function login(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    const res = await fetch("/api/admin/login", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data?.error || "Login failed");
-      return;
-    }
-
-    await load();
   }
 
   useEffect(() => {
-    load();
+    let mounted = true;
+
+    (async () => {
+      if (!mounted) return;
+      await load();
+    })();
+
+    const interval = setInterval(() => {
+      load();
+    }, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
-  if (loading) {
-    return <div className="p-6 text-white/70 font-mono">Loading admin…</div>;
-  }
-
-  if (needLogin) {
-    return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center p-6">
-        <form onSubmit={login} className="w-full max-w-sm bg-white/5 border border-white/10 rounded-2xl p-6 space-y-4">
-          <div className="text-lg font-black">Admin Login</div>
-
-          <input
-            className="w-full rounded-xl bg-black/40 border border-white/10 px-4 py-2"
-            placeholder="Username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoCapitalize="none"
-            autoCorrect="off"
-          />
-          <input
-            className="w-full rounded-xl bg-black/40 border border-white/10 px-4 py-2"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            type="password"
-          />
-
-          {error && <div className="text-red-300 text-sm">{error}</div>}
-
-          <button className="w-full rounded-xl bg-white text-black font-black py-2">Sign in</button>
-        </form>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 text-white">
-        <div className="font-black mb-2">Admin overview failed</div>
-        <div className="text-white/60 mb-4">{error}</div>
-        <button className="px-4 py-2 rounded-xl bg-white/10" onClick={load}>
-          Retry
-        </button>
-      </div>
-    );
-  }
+  const totals = useMemo(() => {
+    const totalUsers = rows.length;
+    const mined = rows.reduce((a, r) => a + (r.totalMinedEcho || 0), 0);
+    const purchased = rows.reduce((a, r) => a + (r.totalPurchasedEcho || 0), 0);
+    const totalEcho = rows.reduce((a, r) => a + (r.totalEcho || 0), 0);
+    return { totalUsers, mined, purchased, totalEcho };
+  }, [rows]);
 
   return (
-    <div className="min-h-screen bg-black text-white p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-xl font-black">Admin DB</div>
-        <button className="px-3 py-2 rounded-xl bg-white/10" onClick={load}>
-          Refresh
-        </button>
-      </div>
+    <div className="min-h-screen bg-background text-white px-5 py-6">
+      <div className="max-w-6xl mx-auto space-y-6">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black tracking-tight">Admin DB</h1>
+            <p className="text-white/50 text-sm">
+              {generatedAt ? <>Last updated: <span className="font-mono">{fmtDate(generatedAt)}</span></> : "—"}
+            </p>
+          </div>
 
-      <div className="overflow-auto border border-white/10 rounded-2xl">
-        <table className="w-full text-sm">
-          <thead className="bg-white/5">
-            <tr className="text-left">
-              <th className="p-3">Wallet</th>
-              <th className="p-3">Verified</th>
-              <th className="p-3">Total Mined</th>
-              <th className="p-3">Active</th>
-              <th className="p-3">Last Session</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.userId} className="border-t border-white/10">
-                <td className="p-3 font-mono text-xs">{r.walletAddress ?? "—"}</td>
-                <td className="p-3">{r.walletVerified ? "✅" : "—"}</td>
-                <td className="p-3">{Number(r.totalMinedEcho || 0).toFixed(6)}</td>
-                <td className="p-3">{r.activeSession ? "⛏️" : "—"}</td>
-                <td className="p-3 text-xs text-white/70">
-                  {r.lastSessionStart ? `${new Date(r.lastSessionStart).toLocaleString()} → ${r.lastSessionEnd ? new Date(r.lastSessionEnd).toLocaleString() : "…"}` : "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <div className="flex gap-2">
+            <button
+              onClick={() => load()}
+              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 font-bold text-sm"
+            >
+              Refresh
+            </button>
+
+            {/* This reliably triggers the browser Basic Auth prompt */}
+            <button
+              onClick={() => {
+                window.location.href = "/api/admin/overview?redirect=/admin/db";
+              }}
+              className="px-4 py-2 rounded-xl bg-teal-500/20 hover:bg-teal-500/25 border border-teal-500/30 font-black text-sm"
+            >
+              Authenticate
+            </button>
+          </div>
+        </div>
+
+        {/* Summary cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Users</div>
+            <div className="text-xl font-black">{totals.totalUsers}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Total Mined</div>
+            <div className="text-xl font-black">{fmt(totals.mined)}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Total Purchased</div>
+            <div className="text-xl font-black">{fmt(totals.purchased)}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <div className="text-[10px] uppercase tracking-widest text-white/50 font-black">Total Echo</div>
+            <div className="text-xl font-black">{fmt(totals.totalEcho)}</div>
+          </div>
+        </div>
+
+        {/* Error */}
+        {err && (
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4">
+            <div className="font-black text-red-200">Admin overview failed</div>
+            <div className="text-sm text-red-100/80 mt-1 break-words">{err}</div>
+            <div className="text-xs text-red-100/60 mt-3">
+              Tap <b>Authenticate</b> to trigger the admin login prompt.
+            </div>
+          </div>
+        )}
+
+        {/* Table */}
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden">
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+            <div className="font-black tracking-tight">Users</div>
+            {loading && <div className="text-white/50 text-xs font-mono">loading…</div>}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-[900px] w-full text-sm">
+              <thead className="bg-white/[0.03]">
+                <tr className="text-left">
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Wallet</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Purchased</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Mined</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Total</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">First session</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Most recent</th>
+                  <th className="px-4 py-3 text-white/60 font-black text-[10px] uppercase tracking-widest">Last session mined</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-8 text-white/50" colSpan={7}>
+                      No rows (or not authenticated yet).
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((r) => (
+                    <tr key={r.userId} className="border-t border-white/5">
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {r.walletAddress ? (
+                          <span className="text-white">{r.walletAddress}</span>
+                        ) : (
+                          <span className="text-white/40">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 font-black tabular-nums">{fmt(r.totalPurchasedEcho || 0)}</td>
+                      <td className="px-4 py-3 font-black tabular-nums">{fmt(r.totalMinedEcho || 0)}</td>
+                      <td className="px-4 py-3 font-black tabular-nums">{fmt(r.totalEcho || 0)}</td>
+                      <td className="px-4 py-3 text-white/70">{fmtDate(r.firstMiningAt)}</td>
+                      <td className="px-4 py-3 text-white/70">{fmtDate(r.lastMiningAt)}</td>
+                      <td className="px-4 py-3 font-black tabular-nums">
+                        {r.lastSessionMined == null ? <span className="text-white/40">—</span> : fmt(r.lastSessionMined)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="px-4 py-3 border-t border-white/10 text-[11px] text-white/40">
+            Polling every 5s. Purchases currently redacted (0) until you add the Purchase model + migration.
+          </div>
+        </div>
       </div>
     </div>
   );
