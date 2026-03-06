@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+
 function json(data: any, status = 200) {
   return NextResponse.json(data, {
     status,
@@ -38,9 +40,10 @@ function parseBasicAuth(req: NextRequest) {
     const decoded = Buffer.from(value, "base64").toString("utf8");
     const idx = decoded.indexOf(":");
     if (idx === -1) return null;
-    const user = decoded.slice(0, idx);
-    const pass = decoded.slice(idx + 1);
-    return { user, pass };
+    return {
+      user: decoded.slice(0, idx),
+      pass: decoded.slice(idx + 1),
+    };
   } catch {
     return null;
   }
@@ -50,9 +53,11 @@ function isAuthed(req: NextRequest) {
   const creds = parseBasicAuth(req);
   const ADMIN_USER = process.env.ADMIN_USER || "";
   const ADMIN_PASS = process.env.ADMIN_PASS || "";
-
-  if (!ADMIN_USER || !ADMIN_PASS) return false;
   return !!creds && creds.user === ADMIN_USER && creds.pass === ADMIN_PASS;
+}
+
+function toIso(d: Date | null | undefined) {
+  return d ? d.toISOString() : null;
 }
 
 export async function GET(req: NextRequest) {
@@ -64,6 +69,8 @@ export async function GET(req: NextRequest) {
     if (redirect) {
       return NextResponse.redirect(new URL(redirect, req.url));
     }
+
+    const now = Date.now();
 
     const users = await prisma.user.findMany({
       orderBy: { createdAt: "desc" },
@@ -95,49 +102,48 @@ export async function GET(req: NextRequest) {
           },
         });
 
+        const ms = u.miningSession;
+        const startedAtMs = ms?.startedAt ? new Date(ms.startedAt).getTime() : null;
+        const endsAtMs = startedAtMs ? startedAtMs + SESSION_DURATION_MS : null;
+
+        // ✅ derive "real" activity from time window, not just the DB flag
+        const sessionIsActive =
+          !!ms?.isActive &&
+          startedAtMs != null &&
+          endsAtMs != null &&
+          now < endsAtMs;
+
         const totalMinedEcho = Number(u.totalMinedEcho ?? 0);
-        const totalPurchasedEcho = 0; // redacted for now
+        const totalPurchasedEcho = 0; // purchases redacted for now
         const totalEcho = totalMinedEcho + totalPurchasedEcho;
 
-        const baseRatePerHr = Number(u.miningSession?.baseRatePerHr ?? 0);
-        const multiplier = Number(u.miningSession?.multiplier ?? 1);
+        const baseRatePerHr = Number(ms?.baseRatePerHr ?? 0);
+        const multiplier = Number(ms?.multiplier ?? 1);
         const effectiveRatePerSec =
-          baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
+          sessionIsActive && baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
 
         return {
           userId: u.id,
           walletAddress: u.wallet?.address ?? null,
           walletVerified: !!u.wallet?.verified,
-          walletVerifiedAt: u.wallet?.verifiedAt
-            ? u.wallet.verifiedAt.toISOString()
-            : null,
+          walletVerifiedAt: toIso(u.wallet?.verifiedAt),
 
           totalMinedEcho,
           totalPurchasedEcho,
           totalEcho,
 
-          // live session fields
-          sessionIsActive: !!u.miningSession?.isActive,
-          sessionStartedAt: u.miningSession?.startedAt
-            ? u.miningSession.startedAt.toISOString()
-            : null,
-          sessionLastAccruedAt: u.miningSession?.lastAccruedAt
-            ? u.miningSession.lastAccruedAt.toISOString()
-            : null,
-          sessionMined: Number(u.miningSession?.sessionMined ?? 0),
-          baseRatePerHr,
-          multiplier,
+          sessionIsActive,
+          sessionStartedAt: toIso(ms?.startedAt),
+          sessionEndsAt: endsAtMs ? new Date(endsAtMs).toISOString() : null,
+          sessionLastAccruedAt: toIso(ms?.lastAccruedAt),
+          sessionMined: sessionIsActive ? Number(ms?.sessionMined ?? 0) : 0,
+          baseRatePerHr: sessionIsActive ? baseRatePerHr : 0,
+          multiplier: sessionIsActive ? multiplier : 1,
           effectiveRatePerSec,
 
-          firstMiningAt: firstMine?.startedAt
-            ? firstMine.startedAt.toISOString()
-            : null,
-          lastMiningAt: lastMine?.startedAt
-            ? lastMine.startedAt.toISOString()
-            : null,
-          lastSessionEndedAt: lastMine?.endedAt
-            ? lastMine.endedAt.toISOString()
-            : null,
+          firstMiningAt: toIso(firstMine?.startedAt),
+          lastMiningAt: toIso(lastMine?.startedAt),
+          lastSessionEndedAt: toIso(lastMine?.endedAt),
           lastSessionMined:
             lastMine?.totalMined != null ? Number(lastMine.totalMined) : null,
 
