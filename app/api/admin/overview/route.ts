@@ -40,6 +40,7 @@ function parseBasicAuth(req: NextRequest) {
     const decoded = Buffer.from(value, "base64").toString("utf8");
     const idx = decoded.indexOf(":");
     if (idx === -1) return null;
+
     return {
       user: decoded.slice(0, idx),
       pass: decoded.slice(idx + 1),
@@ -106,7 +107,6 @@ export async function GET(req: NextRequest) {
         const startedAtMs = ms?.startedAt ? new Date(ms.startedAt).getTime() : null;
         const endsAtMs = startedAtMs ? startedAtMs + SESSION_DURATION_MS : null;
 
-        // ✅ derive "real" activity from time window, not just the DB flag
         const sessionIsActive =
           !!ms?.isActive &&
           startedAtMs != null &&
@@ -114,13 +114,25 @@ export async function GET(req: NextRequest) {
           now < endsAtMs;
 
         const totalMinedEcho = Number(u.totalMinedEcho ?? 0);
-        const totalPurchasedEcho = 0; // purchases redacted for now
-        const totalEcho = totalMinedEcho + totalPurchasedEcho;
+        const totalPurchasedEcho = 0; // keep redacted for now
 
         const baseRatePerHr = Number(ms?.baseRatePerHr ?? 0);
         const multiplier = Number(ms?.multiplier ?? 1);
         const effectiveRatePerSec =
           sessionIsActive && baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
+
+        const sessionMined = sessionIsActive ? Number(ms?.sessionMined ?? 0) : 0;
+
+        let liveSessionMining = sessionMined;
+        if (sessionIsActive && ms?.lastAccruedAt && effectiveRatePerSec > 0) {
+          const deltaSec = Math.max(0, (now - ms.lastAccruedAt.getTime()) / 1000);
+          liveSessionMining = sessionMined + deltaSec * effectiveRatePerSec;
+        }
+
+        // THIS is the number that matches the live Mine home screen balance card
+        const liveTotalMinedEcho = totalMinedEcho + liveSessionMining;
+
+        const totalEcho = liveTotalMinedEcho + totalPurchasedEcho;
 
         return {
           userId: u.id,
@@ -128,7 +140,12 @@ export async function GET(req: NextRequest) {
           walletVerified: !!u.wallet?.verified,
           walletVerifiedAt: toIso(u.wallet?.verifiedAt),
 
+          // settled/server total
           totalMinedEcho,
+
+          // live total to match home screen
+          liveTotalMinedEcho,
+
           totalPurchasedEcho,
           totalEcho,
 
@@ -136,7 +153,8 @@ export async function GET(req: NextRequest) {
           sessionStartedAt: toIso(ms?.startedAt),
           sessionEndsAt: endsAtMs ? new Date(endsAtMs).toISOString() : null,
           sessionLastAccruedAt: toIso(ms?.lastAccruedAt),
-          sessionMined: sessionIsActive ? Number(ms?.sessionMined ?? 0) : 0,
+          sessionMined,
+          liveSessionMining,
           baseRatePerHr: sessionIsActive ? baseRatePerHr : 0,
           multiplier: sessionIsActive ? multiplier : 1,
           effectiveRatePerSec,
@@ -156,6 +174,7 @@ export async function GET(req: NextRequest) {
       wallets: rows.length,
       activeSessions: rows.filter((r) => r.sessionIsActive).length,
       totalMinedEcho: rows.reduce((sum, r) => sum + r.totalMinedEcho, 0),
+      liveTotalMinedEcho: rows.reduce((sum, r) => sum + r.liveTotalMinedEcho, 0),
       totalPurchasedEcho: rows.reduce((sum, r) => sum + r.totalPurchasedEcho, 0),
       totalEcho: rows.reduce((sum, r) => sum + r.totalEcho, 0),
     };
