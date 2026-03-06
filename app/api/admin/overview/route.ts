@@ -7,8 +7,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function json(data: any, status?: number) {
-  return NextResponse.json(data, status ? { status } : undefined);
-}
+  return NextResponse.json(data, {
+  headers: {
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+    Pragma: "no-cache",
+    Expires: "0",
+  },
+});
 
 export async function GET() {
   try {
