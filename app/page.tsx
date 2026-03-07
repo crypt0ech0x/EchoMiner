@@ -40,6 +40,7 @@ export default function EchoMinerApp() {
         setLoadError(null);
         const s = await EchoAPI.getState();
         if (!mounted) return;
+
         setState(s);
 
         if (!s.authed) {
@@ -57,7 +58,7 @@ export default function EchoMinerApp() {
   }, []);
 
   // If the connected Phantom wallet differs from the server-authenticated wallet,
-  // force the app to the Wallet tab so the user can re-auth as the correct wallet.
+  // move the user to the Wallet tab so they can re-auth as the correct wallet.
   useEffect(() => {
     if (!connectedWalletAddress || !serverWalletAddress) return;
     if (connectedWalletAddress !== serverWalletAddress) {
@@ -65,6 +66,7 @@ export default function EchoMinerApp() {
     }
   }, [connectedWalletAddress, serverWalletAddress]);
 
+  // Refresh mining state while active
   useEffect(() => {
     if (!state?.session?.isActive) return;
 
@@ -84,6 +86,8 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
+  // Same display logic as mine screen:
+  // DB sessionMined + smoothing since lastAccruedAt
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -165,7 +169,7 @@ export default function EchoMinerApp() {
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
             onStartSession={async () => {
-              // Don’t allow mining from Mine tab if wallet mismatch exists.
+              // Only block if there is a real, known wallet mismatch
               if (walletMismatch) {
                 setActiveTab(Tab.WALLET);
                 return;
@@ -175,8 +179,18 @@ export default function EchoMinerApp() {
                 const updated = await EchoAPI.startSession();
                 setState(updated);
               } catch (e: any) {
-                // If start fails, force wallet tab so user can re-auth if needed
-                setActiveTab(Tab.WALLET);
+                try {
+                  const fresh = await EchoAPI.getState();
+                  setState(fresh);
+
+                  if (!fresh.authed) {
+                    setActiveTab(Tab.WALLET);
+                  }
+                } catch {
+                  // leave UI as-is if even state refresh fails
+                }
+
+                console.error("start session failed:", e);
               }
             }}
           />
@@ -212,7 +226,6 @@ export default function EchoMinerApp() {
               const fresh = await EchoAPI.getState();
               setState(fresh);
 
-              // Once re-verified, if auth is good, return to mine tab
               if (fresh.authed) {
                 setActiveTab(Tab.MINE);
               }
