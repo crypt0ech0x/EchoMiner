@@ -3,7 +3,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { Tab, AppState } from "@/lib/types";
+import { Tab } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
 import MineTab from "@/components/MineTab";
@@ -15,8 +15,9 @@ import ProfileDrawer from "@/components/ProfileDrawer";
 export default function EchoMinerApp() {
   const { publicKey, connected } = useWallet();
 
-  const [state, setState] = useState<AppState | null>(null);
+  const [state, setState] = useState<any | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -33,8 +34,16 @@ export default function EchoMinerApp() {
   }, []);
 
   useEffect(() => {
-    EchoAPI.setConnectedWalletAddress(connectedWalletAddress);
-  }, [connectedWalletAddress]);
+    try {
+      if (connected && publicKey) {
+        sessionStorage.setItem("connected_wallet_address", publicKey.toBase58());
+      } else {
+        sessionStorage.removeItem("connected_wallet_address");
+      }
+    } catch {
+      // ignore
+    }
+  }, [connected, publicKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -44,7 +53,6 @@ export default function EchoMinerApp() {
         setLoadError(null);
         const s = await EchoAPI.getState();
         if (!mounted) return;
-
         setState(s);
 
         if (!s.authed) {
@@ -62,13 +70,6 @@ export default function EchoMinerApp() {
   }, []);
 
   useEffect(() => {
-    if (!connectedWalletAddress || !serverWalletAddress) return;
-    if (connectedWalletAddress !== serverWalletAddress) {
-      setActiveTab(Tab.WALLET);
-    }
-  }, [connectedWalletAddress, serverWalletAddress]);
-
-  useEffect(() => {
     if (!state?.session?.isActive) return;
 
     const interval = setInterval(async () => {
@@ -76,7 +77,7 @@ export default function EchoMinerApp() {
         const updated = await EchoAPI.refreshState();
         setState(updated);
       } catch {
-        // ignore
+        // ignore transient refresh errors
       }
     }, 4000);
 
@@ -159,6 +160,21 @@ export default function EchoMinerApp() {
         onOpenNotifications={() => setIsNotificationsOpen(true)}
         state={state}
       >
+        <div className="px-4 pt-2">
+          <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-white/70">
+            <div>Connected wallet: {connectedWalletAddress ?? "none"}</div>
+            <div>Server wallet: {serverWalletAddress ?? "none"}</div>
+            <div>Authed: {String(!!state?.authed)}</div>
+            <div>Wallet mismatch: {String(walletMismatch)}</div>
+          </div>
+
+          {actionError && (
+            <div className="mt-2 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-200">
+              {actionError}
+            </div>
+          )}
+        </div>
+
         {activeTab === Tab.MINE && (
           <MineTab
             state={state}
@@ -168,56 +184,34 @@ export default function EchoMinerApp() {
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
             onStartSession={async () => {
-              if (walletMismatch) {
-                setActiveTab(Tab.WALLET);
-                return;
-              }
+              setActionError(null);
 
               try {
-                const updated = await EchoAPI.startSession({
-                  walletAddress: connectedWalletAddress ?? undefined,
-                });
+                const updated = await EchoAPI.startSession();
                 setState(updated);
               } catch (e: any) {
-                if (e?.status === 409 && e?.data?.error === "Wallet session mismatch") {
-                  try {
-                    localStorage.removeItem(EchoAPI.STORAGE_KEY);
-                  } catch {
-                    // ignore
-                  }
+                const msg =
+                  e?.data?.error ||
+                  e?.message ||
+                  "Start session failed";
 
-                  try {
-                    await fetch("/api/auth/logout", {
-                      method: "POST",
-                      credentials: "same-origin",
-                    });
-                  } catch {
-                    // ignore
-                  }
+                const details = [
+                  `Error: ${msg}`,
+                  `HTTP status: ${String(e?.status ?? "unknown")}`,
+                  `Connected wallet: ${connectedWalletAddress ?? "none"}`,
+                  `Server wallet: ${serverWalletAddress ?? "none"}`,
+                ];
 
-                  try {
-                    const fresh = await EchoAPI.getState();
-                    setState(fresh);
-                  } catch {
-                    // ignore
-                  }
-
-                  setActiveTab(Tab.WALLET);
-                  return;
+                if (e?.data?.requestedWalletAddress || e?.data?.serverWalletAddress) {
+                  details.push(
+                    `Requested wallet: ${e?.data?.requestedWalletAddress ?? "none"}`
+                  );
+                  details.push(
+                    `Server wallet from API: ${e?.data?.serverWalletAddress ?? "none"}`
+                  );
                 }
 
-                if (e?.status === 401) {
-                  setActiveTab(Tab.WALLET);
-                  return;
-                }
-
-                try {
-                  const fresh = await EchoAPI.getState();
-                  setState(fresh);
-                } catch {
-                  // ignore
-                }
-
+                setActionError(details.join(" | "));
                 console.error("start session failed:", e);
               }
             }}
@@ -253,10 +247,7 @@ export default function EchoMinerApp() {
             onVerified={async () => {
               const fresh = await EchoAPI.getState();
               setState(fresh);
-
-              if (fresh.authed) {
-                setActiveTab(Tab.MINE);
-              }
+              setActionError(null);
             }}
           />
         )}
