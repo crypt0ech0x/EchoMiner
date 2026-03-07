@@ -3,6 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
+import type { NextResponse } from "next/server";
 
 const COOKIE_NAME = "echo_session";
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -13,13 +14,7 @@ function newSessionId() {
 
 /**
  * Only use an explicit env var for cross-subdomain cookies.
- * Otherwise, leave domain undefined so the browser sets a host-only cookie.
- *
- * Examples:
- * - COOKIE_DOMAIN=.echominer.fun
- * - COOKIE_DOMAIN=.echominer.com
- *
- * If unset, cookie works on the exact current host only.
+ * Otherwise leave domain undefined so the browser sets a host-only cookie.
  */
 function cookieDomain() {
   const raw = process.env.COOKIE_DOMAIN?.trim();
@@ -50,10 +45,18 @@ export async function createSessionForUser(
     data: { id: sessionId, userId, expiresAt },
   });
 
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
+  return { sessionId, expiresAt, maxAgeSeconds };
+}
 
-  return { sessionId, expiresAt };
+export function attachSessionCookie(
+  response: NextResponse,
+  sessionId: string,
+  opts?: { maxAgeSeconds?: number }
+) {
+  const maxAgeSeconds = opts?.maxAgeSeconds ?? DEFAULT_SESSION_TTL_SECONDS;
+
+  response.cookies.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
+  return response;
 }
 
 export async function revokeSessionCookie() {
