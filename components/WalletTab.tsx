@@ -179,8 +179,6 @@ export default function WalletTab({
     try {
       setIsVerifying(true);
 
-      // If a different wallet is logged in on the server,
-      // automatically log it out first, then continue.
       if (serverMismatch) {
         await logoutOldServerSessionIfNeeded();
       }
