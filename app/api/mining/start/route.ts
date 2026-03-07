@@ -1,7 +1,10 @@
 // app/api/mining/start/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireMatchingWalletSession } from "@/lib/server-wallet-auth";
+import {
+  requireMatchingWalletSession,
+  isWalletSessionErr,
+} from "@/lib/server-wallet-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,16 +30,13 @@ export async function GET() {
   try {
     const sessionCheck = await requireMatchingWalletSession(null);
 
-    if (!sessionCheck.ok) {
-      const error = sessionCheck.error;
-      const serverWalletAddress = sessionCheck.serverWalletAddress ?? null;
-
+    if (isWalletSessionErr(sessionCheck)) {
       return NextResponse.json(
         {
           ok: false,
           method: "GET",
-          error,
-          serverWalletAddress,
+          error: sessionCheck.error,
+          serverWalletAddress: sessionCheck.serverWalletAddress ?? null,
         },
         { status: sessionCheck.status }
       );
@@ -73,20 +73,15 @@ export async function POST(req: Request) {
 
     const sessionCheck = await requireMatchingWalletSession(requestedWalletAddress);
 
-    if (!sessionCheck.ok) {
-      const error = sessionCheck.error;
-      const serverWalletAddress = sessionCheck.serverWalletAddress ?? null;
-      const requestedWalletAddressOut = sessionCheck.requestedWalletAddress ?? null;
-      const status = sessionCheck.status;
-
+    if (isWalletSessionErr(sessionCheck)) {
       return NextResponse.json(
         {
           ok: false,
-          error,
-          serverWalletAddress,
-          requestedWalletAddress: requestedWalletAddressOut,
+          error: sessionCheck.error,
+          serverWalletAddress: sessionCheck.serverWalletAddress ?? null,
+          requestedWalletAddress: sessionCheck.requestedWalletAddress ?? null,
         },
-        { status }
+        { status: sessionCheck.status }
       );
     }
 
@@ -125,7 +120,6 @@ export async function POST(req: Request) {
           return {
             kind: "already_active" as const,
             endsAt,
-            session: existing,
           };
         }
 
@@ -181,7 +175,7 @@ export async function POST(req: Request) {
       const startedAt = now;
       const endsAt = new Date(startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
-      const session = await tx.miningSession.upsert({
+      await tx.miningSession.upsert({
         where: { userId: authedUser.id },
         update: {
           isActive: true,
@@ -205,7 +199,6 @@ export async function POST(req: Request) {
       return {
         kind: "started" as const,
         endsAt,
-        session,
       };
     });
 
