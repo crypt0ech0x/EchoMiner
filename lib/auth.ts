@@ -11,16 +11,30 @@ function newSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-// IMPORTANT: set cookie domain in prod so www/apex share the same session
+/**
+ * Only use an explicit env var for cross-subdomain cookies.
+ * Otherwise, leave domain undefined so the browser sets a host-only cookie.
+ *
+ * Examples:
+ * - COOKIE_DOMAIN=.echominer.fun
+ * - COOKIE_DOMAIN=.echominer.com
+ *
+ * If unset, cookie works on the exact current host only.
+ */
 function cookieDomain() {
-  // Option A: explicit env var (recommended)
-  if (process.env.COOKIE_DOMAIN) return process.env.COOKIE_DOMAIN;
+  const raw = process.env.COOKIE_DOMAIN?.trim();
+  return raw ? raw : undefined;
+}
 
-  // Option B: if your custom domain is echominer.fun, this covers www + apex
-  if (process.env.NODE_ENV === "production") return ".echominer.fun";
-
-  // local dev: no domain
-  return undefined;
+function cookieOptions(maxAgeSeconds?: number) {
+  return {
+    httpOnly: true as const,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+    ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
+    ...(cookieDomain() ? { domain: cookieDomain() } : {}),
+  };
 }
 
 export async function createSessionForUser(
@@ -37,14 +51,7 @@ export async function createSessionForUser(
   });
 
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, sessionId, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: maxAgeSeconds,
-    domain: cookieDomain(),
-  });
+  cookieStore.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
 
   return { sessionId, expiresAt };
 }
@@ -60,11 +67,10 @@ export async function revokeSessionCookie() {
     });
   }
 
-  // Delete with same options you set with (domain/path must match)
   cookieStore.delete({
     name: COOKIE_NAME,
     path: "/",
-    domain: cookieDomain(),
+    ...(cookieDomain() ? { domain: cookieDomain() } : {}),
   });
 }
 
