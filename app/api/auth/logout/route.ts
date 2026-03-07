@@ -15,7 +15,6 @@ export async function POST() {
   }
 }
 
-// Optional: handy for testing in a browser address bar
 export async function GET() {
-  return NextResponse.json({ ok: true, info: "POST /api/auth/logout to logout." });
+  return POST();
 }
