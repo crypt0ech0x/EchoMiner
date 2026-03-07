@@ -114,7 +114,6 @@ export default function WalletTab({
     }
 
     loadBalance();
-
     return () => {
       cancelled = true;
     };
@@ -140,16 +139,12 @@ export default function WalletTab({
     try {
       try {
         localStorage.removeItem(APP_STATE_KEY);
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       try {
         if (address) localStorage.removeItem(verifiedKey(address));
         if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       await fetch("/api/auth/logout", {
         method: "POST",
@@ -227,9 +222,7 @@ export default function WalletTab({
 
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       setIsVerified(true);
       onVerified?.();
