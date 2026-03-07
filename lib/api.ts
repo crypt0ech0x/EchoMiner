@@ -104,4 +104,244 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     !!prev.walletAddress &&
     incomingWalletAddr !== prev.walletAddress;
 
-  const base = shouldReset ? defaultAppState() :
+  const base = shouldReset ? defaultAppState() : (prev ?? defaultAppState());
+
+  const wallet: WalletState = {
+    address: incomingWalletAddr,
+    verified: !!api.wallet?.verified,
+    verifiedAt: api.wallet?.verifiedAt ?? null,
+  };
+
+  const totalMinedEcho = Number(api.user?.totalMinedEcho ?? 0);
+
+  const isActive = !!api.session?.isActive;
+  const startedAtMs = api.session?.startedAt ? new Date(api.session.startedAt).getTime() : null;
+  const lastAccruedAtMs = api.session?.lastAccruedAt
+    ? new Date(api.session.lastAccruedAt).getTime()
+    : null;
+
+  const baseRatePerHr = Number(api.session?.baseRatePerHr ?? 0);
+  const multiplier = Number(api.session?.multiplier ?? 1);
+  const sessionMined = Number(api.session?.sessionMined ?? 0);
+
+  const effectiveRatePerSec = baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
+  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
+  const endTimeMs = startedAtMs ? startedAtMs + TWENTY_FOUR_HOURS_MS : null;
+
+  return {
+    ...base,
+
+    authed: !!api.authed,
+    wallet,
+
+    walletAddress: wallet.address,
+    walletVerifiedAt: wallet.verifiedAt ? new Date(wallet.verifiedAt).getTime() : null,
+
+    user: {
+      ...base.user,
+      totalMined: totalMinedEcho,
+      balance: totalMinedEcho,
+      guest: !api.authed,
+    },
+
+    session: {
+      ...base.session,
+      isActive,
+      status: isActive ? "active" : "ended",
+      startTime: startedAtMs,
+      endTime: endTimeMs,
+      baseRate: baseRatePerHr / 3600,
+      effectiveRate: effectiveRatePerSec,
+      baseRatePerHr,
+      multiplier,
+      sessionMined,
+      lastAccruedAt: lastAccruedAtMs,
+    },
+  };
+}
+
+function getConnectedWalletAddress(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(CONNECTED_WALLET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchJson(url: string, init?: RequestInit) {
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+
+  const text = await res.text();
+
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+
+  if (!res.ok) {
+    const err: any = new Error(
+      data?.error || data?.message || `${res.status} ${res.statusText}`
+    );
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+export const EchoAPI = {
+  STORAGE_KEY,
+  CONNECTED_WALLET_KEY,
+
+  loadLocal(): AppState | null {
+    if (typeof window === "undefined") return null;
+    return safeJsonParse<AppState>(localStorage.getItem(STORAGE_KEY));
+  },
+
+  saveLocal(state: AppState) {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  },
+
+  setConnectedWalletAddress(address: string | null) {
+    if (typeof window === "undefined") return;
+    try {
+      if (address) {
+        sessionStorage.setItem(CONNECTED_WALLET_KEY, address);
+      } else {
+        sessionStorage.removeItem(CONNECTED_WALLET_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  async getState(): Promise<AppState> {
+    const prev = this.loadLocal();
+    const api = (await fetchJson("/api/state", { method: "GET" })) as ApiState;
+    const app = apiToAppState(api, prev);
+    this.saveLocal(app);
+    return app;
+  },
+
+  async refreshState(): Promise<AppState> {
+    await fetchJson("/api/mining/refresh", { method: "POST" });
+    return await this.getState();
+  },
+
+  async startSession(payload?: {
+    baseRatePerHr?: number;
+    multiplier?: number;
+    walletAddress?: string;
+  }): Promise<AppState> {
+    await fetchJson("/api/mining/start", {
+      method: "POST",
+      body: JSON.stringify({
+        ...(payload ?? {}),
+        walletAddress: payload?.walletAddress ?? getConnectedWalletAddress(),
+      }),
+    });
+
+    return await this.getState();
+  },
+
+  async activateAdBoost(): Promise<AppState> {
+    try {
+      await fetchJson("/api/boost/activate", { method: "POST" });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+
+  async getSnapshotCSV(): Promise<string> {
+    const data = await fetchJson("/api/snapshot", { method: "POST" });
+    return String(data?.csv ?? "");
+  },
+
+  async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
+    try {
+      await fetchJson("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+
+  async verifyEmail(email: string): Promise<AppState> {
+    try {
+      await fetchJson("/api/profile/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+
+  async handleNotifications(
+    action: "read" | "readAll" | "clear",
+    id?: string
+  ): Promise<AppState> {
+    try {
+      const method = action === "clear" ? "DELETE" : "PATCH";
+      await fetchJson("/api/notifications", {
+        method,
+        body: JSON.stringify({ action, id }),
+      });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+
+  async updateNotificationPreferences(
+    prefs: NotificationPreferences
+  ): Promise<AppState> {
+    try {
+      await fetchJson("/api/notifications/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ prefs }),
+      });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+
+  async createStripeSession(itemId: string): Promise<string> {
+    const data = await fetchJson("/api/store/checkout", {
+      method: "POST",
+      body: JSON.stringify({ itemId }),
+    });
+    return String(data?.sessionId ?? "");
+  },
+
+  async handleStripeWebhook(sessionId: string): Promise<AppState> {
+    try {
+      await fetchJson("/api/store/webhook", {
+        method: "POST",
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch {
+      // ignore
+    }
+    return await this.getState();
+  },
+};
