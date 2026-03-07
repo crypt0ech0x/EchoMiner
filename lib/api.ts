@@ -35,6 +35,7 @@ function safeJsonParse<T>(s: string | null): T | null {
 
 function defaultAppState(): AppState {
   const now = Date.now();
+
   return {
     authed: false,
     wallet: { address: null, verified: false, verifiedAt: null },
@@ -68,8 +69,6 @@ function defaultAppState(): AppState {
     session: {
       id: "sess",
       isActive: false,
-
-      // legacy UI fields
       startTime: null,
       endTime: null,
       baseRate: 0,
@@ -78,8 +77,6 @@ function defaultAppState(): AppState {
       purchaseMultiplier: 1,
       effectiveRate: 0,
       status: "ended",
-
-      // server fields
       sessionMined: 0,
       lastAccruedAt: null,
       baseRatePerHr: 0,
@@ -98,63 +95,63 @@ function defaultAppState(): AppState {
 }
 
 function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
-  const base = prev ?? defaultAppState();
+  const incomingWalletAddr = api.wallet?.address ?? null;
+
+  const shouldReset =
+    !!prev &&
+    !!incomingWalletAddr &&
+    !!prev.walletAddress &&
+    incomingWalletAddr !== prev.walletAddress;
+
+  const base = shouldReset ? defaultAppState() : (prev ?? defaultAppState());
 
   const wallet: WalletState = {
-    address: api.wallet?.address ?? null,
+    address: incomingWalletAddr,
     verified: !!api.wallet?.verified,
     verifiedAt: api.wallet?.verifiedAt ?? null,
   };
 
   const totalMinedEcho = Number(api.user?.totalMinedEcho ?? 0);
 
-  // Server session fields (truth)
   const isActive = !!api.session?.isActive;
   const startedAtMs = api.session?.startedAt ? new Date(api.session.startedAt).getTime() : null;
-  const lastAccruedAtMs = api.session?.lastAccruedAt ? new Date(api.session.lastAccruedAt).getTime() : null;
+  const lastAccruedAtMs = api.session?.lastAccruedAt
+    ? new Date(api.session.lastAccruedAt).getTime()
+    : null;
 
   const baseRatePerHr = Number(api.session?.baseRatePerHr ?? 0);
   const multiplier = Number(api.session?.multiplier ?? 1);
   const sessionMined = Number(api.session?.sessionMined ?? 0);
 
-  // Your UI uses per-second effectiveRate
   const effectiveRatePerSec = baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
 
-  // Your MineTab expects start/end time; your server uses a 24-hour session
   const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
   const endTimeMs = startedAtMs ? startedAtMs + TWENTY_FOUR_HOURS_MS : null;
+
   return {
     ...base,
 
     authed: !!api.authed,
     wallet,
 
-    // keep legacy fields too (so old code doesn’t break)
     walletAddress: wallet.address,
     walletVerifiedAt: wallet.verifiedAt ? new Date(wallet.verifiedAt).getTime() : null,
 
     user: {
       ...base.user,
       totalMined: totalMinedEcho,
-      // balance is what your UI shows as “wallet balance” / “ECHO balance”
-      // keep it aligned with total mined for now
       balance: totalMinedEcho,
       guest: !api.authed,
     },
 
     session: {
       ...base.session,
-
       isActive,
       status: isActive ? "active" : "ended",
-
-      // legacy fields for MineTab
       startTime: startedAtMs,
       endTime: endTimeMs,
-      baseRate: baseRatePerHr / 3600, // per-sec base
+      baseRate: baseRatePerHr / 3600,
       effectiveRate: effectiveRatePerSec,
-
-      // server fields used for accurate display
       baseRatePerHr,
       multiplier,
       sessionMined,
@@ -166,12 +163,16 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
     cache: "no-store",
     credentials: "include",
   });
 
   const text = await res.text();
+
   let data: any = null;
   try {
     data = text ? JSON.parse(text) : null;
@@ -183,6 +184,7 @@ async function fetchJson(url: string, init?: RequestInit) {
     const msg = data?.error || data?.message || `${res.status} ${res.statusText}`;
     throw new Error(msg);
   }
+
   return data;
 }
 
@@ -208,26 +210,26 @@ export const EchoAPI = {
   },
 
   async refreshState(): Promise<AppState> {
-    // server accrues + returns current numbers
-    const api = (await fetchJson("/api/mining/refresh", { method: "POST" })) as ApiState;
-    const prev = this.loadLocal();
-    const app = apiToAppState(api, prev);
-    this.saveLocal(app);
-    return app;
+    // refresh endpoint returns a partial payload in your current backend,
+    // so re-fetch canonical state after accrual
+    await fetchJson("/api/mining/refresh", { method: "POST" });
+    return await this.getState();
   },
 
-  async startSession(payload?: { baseRatePerHr?: number; multiplier?: number }): Promise<AppState> {
+  async startSession(payload?: {
+    baseRatePerHr?: number;
+    multiplier?: number;
+    walletAddress?: string;
+  }): Promise<AppState> {
     await fetchJson("/api/mining/start", {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
     });
 
-    // immediately re-fetch from /api/state so UI gets startedAt/lastAccruedAt/etc
     return await this.getState();
   },
 
   async activateAdBoost(): Promise<AppState> {
-    // If you don’t have this route yet, keep compile-safe.
     try {
       await fetchJson("/api/boost/activate", { method: "POST" });
     } catch {
@@ -236,17 +238,17 @@ export const EchoAPI = {
     return await this.getState();
   },
 
-  // ---- methods your UI calls (compile-safe) ----
-
   async getSnapshotCSV(): Promise<string> {
     const data = await fetchJson("/api/snapshot", { method: "POST" });
     return String(data?.csv ?? "");
   },
 
   async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
-    // If /api/profile exists, great. If not, don’t crash build.
     try {
-      await fetchJson("/api/profile", { method: "PATCH", body: JSON.stringify(updates) });
+      await fetchJson("/api/profile", {
+        method: "PATCH",
+        body: JSON.stringify(updates),
+      });
     } catch {
       // ignore for now
     }
@@ -255,14 +257,20 @@ export const EchoAPI = {
 
   async verifyEmail(email: string): Promise<AppState> {
     try {
-      await fetchJson("/api/profile/verify-email", { method: "POST", body: JSON.stringify({ email }) });
+      await fetchJson("/api/profile/verify-email", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
     } catch {
       // ignore for now
     }
     return await this.getState();
   },
 
-  async handleNotifications(action: "read" | "readAll" | "clear", id?: string): Promise<AppState> {
+  async handleNotifications(
+    action: "read" | "readAll" | "clear",
+    id?: string
+  ): Promise<AppState> {
     try {
       const method = action === "clear" ? "DELETE" : "PATCH";
       await fetchJson("/api/notifications", {
@@ -275,7 +283,9 @@ export const EchoAPI = {
     return await this.getState();
   },
 
-  async updateNotificationPreferences(prefs: NotificationPreferences): Promise<AppState> {
+  async updateNotificationPreferences(
+    prefs: NotificationPreferences
+  ): Promise<AppState> {
     try {
       await fetchJson("/api/notifications/preferences", {
         method: "PATCH",
