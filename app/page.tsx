@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { Tab, AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
 import Layout from "@/components/Layout";
@@ -12,6 +13,8 @@ import WalletTab from "@/components/WalletTab";
 import ProfileDrawer from "@/components/ProfileDrawer";
 
 export default function EchoMinerApp() {
+  const { publicKey, connected } = useWallet();
+
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -19,15 +22,16 @@ export default function EchoMinerApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // Smooth UI clock
   const [now, setNow] = useState(() => Date.now());
+
+  const connectedWalletAddress = connected && publicKey ? publicKey.toBase58() : null;
+  const serverWalletAddress = state?.wallet?.address ?? null;
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
 
-  // Initial load
   useEffect(() => {
     let mounted = true;
 
@@ -52,7 +56,15 @@ export default function EchoMinerApp() {
     };
   }, []);
 
-  // Refresh mining state while active
+  // If the connected Phantom wallet differs from the server-authenticated wallet,
+  // force the app to the Wallet tab so the user can re-auth as the correct wallet.
+  useEffect(() => {
+    if (!connectedWalletAddress || !serverWalletAddress) return;
+    if (connectedWalletAddress !== serverWalletAddress) {
+      setActiveTab(Tab.WALLET);
+    }
+  }, [connectedWalletAddress, serverWalletAddress]);
+
   useEffect(() => {
     if (!state?.session?.isActive) return;
 
@@ -72,8 +84,6 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
-  // Same display logic as mine screen:
-  // DB sessionMined + smoothing since lastAccruedAt
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -129,6 +139,11 @@ export default function EchoMinerApp() {
     );
   }
 
+  const walletMismatch =
+    !!connectedWalletAddress &&
+    !!serverWalletAddress &&
+    connectedWalletAddress !== serverWalletAddress;
+
   return (
     <div className="h-screen w-screen relative overflow-hidden bg-background">
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-purple-600/20 blur-[100px] rounded-full" />
@@ -150,8 +165,19 @@ export default function EchoMinerApp() {
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
             onStartSession={async () => {
-              const updated = await EchoAPI.startSession();
-              setState(updated);
+              // Don’t allow mining from Mine tab if wallet mismatch exists.
+              if (walletMismatch) {
+                setActiveTab(Tab.WALLET);
+                return;
+              }
+
+              try {
+                const updated = await EchoAPI.startSession();
+                setState(updated);
+              } catch (e: any) {
+                // If start fails, force wallet tab so user can re-auth if needed
+                setActiveTab(Tab.WALLET);
+              }
             }}
           />
         )}
@@ -185,6 +211,11 @@ export default function EchoMinerApp() {
             onVerified={async () => {
               const fresh = await EchoAPI.getState();
               setState(fresh);
+
+              // Once re-verified, if auth is good, return to mine tab
+              if (fresh.authed) {
+                setActiveTab(Tab.MINE);
+              }
             }}
           />
         )}
