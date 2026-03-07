@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Wallet as WalletIcon,
 } from "lucide-react";
+import { EchoAPI } from "@/lib/api";
 
 type WalletFromServer = {
   address: string | null;
@@ -25,8 +26,6 @@ type Props = {
   walletFromServer?: WalletFromServer;
   onVerified?: () => void | Promise<void>;
 };
-
-const APP_STATE_KEY = "echo_miner_state_v1";
 
 function verifiedKey(address: string) {
   return `echo:walletVerified:${address}`;
@@ -133,7 +132,7 @@ export default function WalletTab({
 
   async function clearLocalWalletState() {
     try {
-      localStorage.removeItem(APP_STATE_KEY);
+      localStorage.removeItem(EchoAPI.STORAGE_KEY);
     } catch {
       // ignore
     }
@@ -153,7 +152,7 @@ export default function WalletTab({
 
     await fetch("/api/auth/logout", {
       method: "POST",
-      credentials: "include",
+      credentials: "same-origin",
     }).catch(() => null);
 
     setIsVerified(false);
@@ -183,11 +182,13 @@ export default function WalletTab({
         await logoutOldServerSessionIfNeeded();
       }
 
+      EchoAPI.setConnectedWalletAddress(publicKey.toBase58());
+
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-        credentials: "include",
+        credentials: "same-origin",
       });
 
       if (!challengeRes.ok) {
@@ -215,7 +216,7 @@ export default function WalletTab({
           message,
           signature: Array.from(signature),
         }),
-        credentials: "include",
+        credentials: "same-origin",
       });
 
       if (!verifyRes.ok) {
