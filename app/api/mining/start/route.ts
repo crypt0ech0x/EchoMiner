@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Wallet not verified" }, { status: 401 });
     }
 
-    // Critical: prevent starting for the wrong cookie user
+    // Enforce that the connected wallet matches the authenticated wallet.
     if (
       requestedWalletAddress &&
       wallet.address &&
@@ -67,11 +67,13 @@ export async function POST(req: Request) {
 
     const baseRatePerHr =
       body.baseRatePerHr == null ? DEFAULT_BASE_RATE_PER_HR : Number(body.baseRatePerHr);
+
     const multiplier = body.multiplier == null ? 1 : Number(body.multiplier);
 
     if (!Number.isFinite(baseRatePerHr) || baseRatePerHr <= 0) {
       return NextResponse.json({ ok: false, error: "Invalid baseRatePerHr" }, { status: 400 });
     }
+
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
       return NextResponse.json({ ok: false, error: "Invalid multiplier" }, { status: 400 });
     }
@@ -83,9 +85,11 @@ export async function POST(req: Request) {
         where: { userId: authedUser.id },
       });
 
+      // If an active session exists, either block or settle it if expired.
       if (existing?.isActive && existing.startedAt) {
         const endsAt = new Date(existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
+        // Still active -> do not overwrite it
         if (now.getTime() < endsAt.getTime()) {
           return {
             kind: "already_active" as const,
@@ -94,6 +98,7 @@ export async function POST(req: Request) {
           };
         }
 
+        // Expired but still marked active -> settle and archive first
         const lastAccruedAt = existing.lastAccruedAt ?? existing.startedAt;
         const effectiveNow = endsAt;
 
