@@ -139,12 +139,16 @@ export default function WalletTab({
     try {
       try {
         localStorage.removeItem(APP_STATE_KEY);
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       try {
         if (address) localStorage.removeItem(verifiedKey(address));
         if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       await fetch("/api/auth/logout", {
         method: "POST",
@@ -222,7 +226,9 @@ export default function WalletTab({
 
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       setIsVerified(true);
       onVerified?.();
