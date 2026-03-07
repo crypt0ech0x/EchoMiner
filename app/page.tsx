@@ -57,8 +57,6 @@ export default function EchoMinerApp() {
     };
   }, []);
 
-  // If the connected Phantom wallet differs from the server-authenticated wallet,
-  // move the user to the Wallet tab so they can re-auth as the correct wallet.
   useEffect(() => {
     if (!connectedWalletAddress || !serverWalletAddress) return;
     if (connectedWalletAddress !== serverWalletAddress) {
