@@ -14,10 +14,12 @@ import ProfileDrawer from "@/components/ProfileDrawer";
 export default function EchoMinerApp() {
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
+  // Smooth UI clock
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -25,6 +27,7 @@ export default function EchoMinerApp() {
     return () => clearInterval(t);
   }, []);
 
+  // Initial load
   useEffect(() => {
     let mounted = true;
 
@@ -34,7 +37,10 @@ export default function EchoMinerApp() {
         const s = await EchoAPI.getState();
         if (!mounted) return;
         setState(s);
-        if (s.authed === false) setActiveTab(Tab.WALLET);
+
+        if (!s.authed) {
+          setActiveTab(Tab.WALLET);
+        }
       } catch (e: any) {
         if (!mounted) return;
         setLoadError(e?.message || "Failed to load state");
@@ -46,6 +52,7 @@ export default function EchoMinerApp() {
     };
   }, []);
 
+  // Refresh mining state while active
   useEffect(() => {
     if (!state?.session?.isActive) return;
 
@@ -54,31 +61,39 @@ export default function EchoMinerApp() {
         const updated = await EchoAPI.refreshState();
         setState(updated);
       } catch {
-        // ignore
+        // ignore transient refresh errors
       }
     }, 4000);
 
     return () => clearInterval(interval);
   }, [state?.session?.isActive]);
 
-  const effectiveRatePerSec = state?.session?.effectiveRate ?? 0;
+  const effectiveRatePerSec = useMemo(() => {
+    return Number(state?.session?.effectiveRate ?? 0);
+  }, [state]);
 
+  // Same display logic as mine screen:
+  // DB sessionMined + smoothing since lastAccruedAt
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
     const base = Number(state.session.sessionMined ?? 0);
     const lastAccruedAt = state.session.lastAccruedAt ?? null;
+
     if (!lastAccruedAt) return base;
+    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) return base;
 
     const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
     return base + deltaSec * effectiveRatePerSec;
-  }, [
-    state?.session?.isActive,
-    state?.session?.sessionMined,
-    state?.session?.lastAccruedAt,
-    now,
-    effectiveRatePerSec,
-  ]);
+  }, [state, now, effectiveRatePerSec]);
+
+  const totalMultiplier = useMemo(() => {
+    if (!state?.session) return 1;
+    const base = Number(state.session.baseRate ?? 0);
+    const eff = Number(state.session.effectiveRate ?? 0);
+    if (!base || base <= 0) return 1;
+    return eff / base;
+  }, [state]);
 
   if (loadError) {
     return (
@@ -94,7 +109,7 @@ export default function EchoMinerApp() {
               setLoadError(null);
               const s = await EchoAPI.getState();
               setState(s);
-              if (s.authed === false) setActiveTab(Tab.WALLET);
+              if (!s.authed) setActiveTab(Tab.WALLET);
             } catch (e: any) {
               setLoadError(e?.message || "Failed to load state");
             }
@@ -131,43 +146,48 @@ export default function EchoMinerApp() {
             state={state}
             sessionEarnings={sessionEarnings}
             effectiveRate={effectiveRatePerSec}
-            totalMultiplier={
-              state.session?.baseRate
-                ? state.session.effectiveRate / state.session.baseRate
-                : 1
-            }
+            totalMultiplier={totalMultiplier}
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
-            onStartSession={async () => setState(await EchoAPI.startSession())}
+            onStartSession={async () => {
+              const updated = await EchoAPI.startSession();
+              setState(updated);
+            }}
           />
         )}
 
         {activeTab === Tab.BOOST && (
           <BoostTab
             state={state}
-            onApplyAdBoost={async () => setState(await EchoAPI.activateAdBoost())}
+            onApplyAdBoost={async () => {
+              const updated = await EchoAPI.activateAdBoost();
+              setState(updated);
+            }}
             currentTime={now}
           />
         )}
 
         {activeTab === Tab.STORE && (
-          <StoreTab state={state} onPurchase={setState} />
+          <StoreTab
+            state={state}
+            onPurchase={setState}
+          />
         )}
 
         {activeTab === Tab.WALLET && (
           <WalletTab
             totalMinedEcho={state.user.totalMined}
             walletFromServer={{
-            address: state.wallet?.address ?? null,
-            verified: !!state.wallet?.verified,
-            verifiedAt: state.wallet?.verifiedAt ?? null,
-        }}
+              address: state.wallet?.address ?? null,
+              verified: !!state.wallet?.verified,
+              verifiedAt: state.wallet?.verifiedAt ?? null,
+            }}
             onVerified={async () => {
-        const fresh = await EchoAPI.getState();
-            setState(fresh);
-        }}
-      />
-    )}
+              const fresh = await EchoAPI.getState();
+              setState(fresh);
+            }}
+          />
+        )}
       </Layout>
 
       <ProfileDrawer
