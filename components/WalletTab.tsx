@@ -23,7 +23,7 @@ type Props = {
   totalMinedEcho?: number;
   verifiedWalletAddress?: string | null;
   walletFromServer?: WalletFromServer;
-  onVerified?: () => void;
+  onVerified?: () => void | Promise<void>;
 };
 
 const APP_STATE_KEY = "echo_miner_state_v1";
@@ -49,7 +49,6 @@ export default function WalletTab({
   const [isVerifying, setIsVerifying] = useState(false);
   const [isVerified, setIsVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSwitching, setIsSwitching] = useState(false);
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
@@ -132,33 +131,35 @@ export default function WalletTab({
     }
   }
 
-  async function logoutAndClearLocal() {
-    setError(null);
-    setIsSwitching(true);
+  async function clearLocalWalletState() {
+    try {
+      localStorage.removeItem(APP_STATE_KEY);
+    } catch {
+      // ignore
+    }
 
     try {
-      try {
-        localStorage.removeItem(APP_STATE_KEY);
-      } catch {
-        // ignore
-      }
+      if (address) localStorage.removeItem(verifiedKey(address));
+      if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
+    } catch {
+      // ignore
+    }
+  }
 
-      try {
-        if (address) localStorage.removeItem(verifiedKey(address));
-        if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-      } catch {
-        // ignore
-      }
+  async function logoutOldServerSessionIfNeeded() {
+    if (!serverMismatch) return;
 
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      }).catch(() => null);
+    await clearLocalWalletState();
 
-      setIsVerified(false);
-      onVerified?.();
-    } finally {
-      setIsSwitching(false);
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => null);
+
+    setIsVerified(false);
+
+    if (onVerified) {
+      await onVerified();
     }
   }
 
@@ -170,13 +171,6 @@ export default function WalletTab({
       return;
     }
 
-    if (serverMismatch) {
-      setError(
-        "You are still logged in as a different wallet. Tap “Switch Login to This Wallet” first."
-      );
-      return;
-    }
-
     if (!signMessage) {
       setError("This wallet does not support message signing. Try Phantom or Solflare.");
       return;
@@ -184,6 +178,12 @@ export default function WalletTab({
 
     try {
       setIsVerifying(true);
+
+      // If a different wallet is logged in on the server,
+      // automatically log it out first, then continue.
+      if (serverMismatch) {
+        await logoutOldServerSessionIfNeeded();
+      }
 
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
@@ -193,7 +193,8 @@ export default function WalletTab({
       });
 
       if (!challengeRes.ok) {
-        throw new Error("Could not start verification. Try again.");
+        const data = await challengeRes.json().catch(() => null);
+        throw new Error(data?.error || "Could not start verification. Try again.");
       }
 
       const { nonce } = (await challengeRes.json()) as { nonce: string };
@@ -231,7 +232,10 @@ export default function WalletTab({
       }
 
       setIsVerified(true);
-      onVerified?.();
+
+      if (onVerified) {
+        await onVerified();
+      }
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
     } finally {
@@ -307,19 +311,14 @@ export default function WalletTab({
             {serverMismatch && (
               <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-4">
                 <div className="text-[11px] font-black text-orange-300 uppercase tracking-widest mb-2">
-                  Different wallet is logged in on the server
+                  Connected wallet differs from server login
                 </div>
-                <div className="text-xs text-white/50 font-bold break-all mb-3">
+                <div className="text-xs text-white/50 font-bold break-all mb-2">
                   Server wallet: {serverAddress}
                 </div>
-
-                <button
-                  disabled={isSwitching}
-                  onClick={logoutAndClearLocal}
-                  className="w-full h-12 rounded-2xl bg-white/10 border border-white/10 text-white font-black text-xs uppercase tracking-widest hover:bg-white/15 disabled:opacity-50"
-                >
-                  {isSwitching ? "Switching..." : "Switch Login to This Wallet"}
-                </button>
+                <div className="text-xs text-white/40">
+                  Press Verify Wallet and the app will switch the login automatically.
+                </div>
               </div>
             )}
 
@@ -355,9 +354,8 @@ export default function WalletTab({
 
             <button
               onClick={handleVerifyWallet}
-              disabled={isVerifying || isVerified || serverMismatch}
+              disabled={isVerifying || isVerified}
               className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:hover:bg-white flex items-center justify-center gap-2"
-              title={serverMismatch ? "Switch login first" : undefined}
             >
               {isVerified ? (
                 <>
