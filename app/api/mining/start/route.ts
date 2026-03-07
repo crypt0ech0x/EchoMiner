@@ -12,7 +12,7 @@ type Body = {
   walletAddress?: string;
 };
 
-const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
+const SESSION_DURATION_SECONDS = 60 * 60 * 24;
 const DEFAULT_BASE_RATE_PER_HR = 1;
 
 function clamp(n: number, min: number, max: number) {
@@ -26,9 +26,6 @@ function round6(n: number) {
 export async function POST(req: Request) {
   try {
     const authedUser = await getUserFromSessionCookie();
-    if (!authedUser) {
-      return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
-    }
 
     let body: Body = {};
     try {
@@ -39,16 +36,41 @@ export async function POST(req: Request) {
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
 
+    if (!authedUser) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Not logged in",
+          debug: {
+            requestedWalletAddress,
+            body,
+          },
+        },
+        { status: 401 }
+      );
+    }
+
     const wallet = await prisma.wallet.findFirst({
       where: { userId: authedUser.id },
       select: { address: true, verified: true },
     });
 
     if (!wallet?.verified) {
-      return NextResponse.json({ ok: false, error: "Wallet not verified" }, { status: 401 });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Wallet not verified",
+          debug: {
+            authedUserId: authedUser.id,
+            requestedWalletAddress,
+            serverWalletAddress: wallet?.address ?? null,
+            walletVerified: wallet?.verified ?? false,
+          },
+        },
+        { status: 401 }
+      );
     }
 
-    // Enforce that the connected wallet matches the authenticated wallet.
     if (
       requestedWalletAddress &&
       wallet.address &&
@@ -58,8 +80,11 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "Wallet session mismatch",
-          serverWalletAddress: wallet.address,
-          requestedWalletAddress,
+          debug: {
+            authedUserId: authedUser.id,
+            requestedWalletAddress,
+            serverWalletAddress: wallet.address,
+          },
         },
         { status: 409 }
       );
@@ -71,11 +96,25 @@ export async function POST(req: Request) {
     const multiplier = body.multiplier == null ? 1 : Number(body.multiplier);
 
     if (!Number.isFinite(baseRatePerHr) || baseRatePerHr <= 0) {
-      return NextResponse.json({ ok: false, error: "Invalid baseRatePerHr" }, { status: 400 });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Invalid baseRatePerHr",
+          debug: { baseRatePerHr, body },
+        },
+        { status: 400 }
+      );
     }
 
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
-      return NextResponse.json({ ok: false, error: "Invalid multiplier" }, { status: 400 });
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Invalid multiplier",
+          debug: { multiplier, body },
+        },
+        { status: 400 }
+      );
     }
 
     const now = new Date();
@@ -85,11 +124,9 @@ export async function POST(req: Request) {
         where: { userId: authedUser.id },
       });
 
-      // If an active session exists, either block or settle it if expired.
       if (existing?.isActive && existing.startedAt) {
         const endsAt = new Date(existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
-        // Still active -> do not overwrite it
         if (now.getTime() < endsAt.getTime()) {
           return {
             kind: "already_active" as const,
@@ -98,7 +135,6 @@ export async function POST(req: Request) {
           };
         }
 
-        // Expired but still marked active -> settle and archive first
         const lastAccruedAt = existing.lastAccruedAt ?? existing.startedAt;
         const effectiveNow = endsAt;
 
@@ -184,7 +220,12 @@ export async function POST(req: Request) {
         {
           ok: false,
           error: "Session already active",
-          endsAt: result.endsAt.toISOString(),
+          debug: {
+            authedUserId: authedUser.id,
+            requestedWalletAddress,
+            serverWalletAddress: wallet.address,
+            endsAt: result.endsAt.toISOString(),
+          },
         },
         { status: 409 }
       );
@@ -193,9 +234,20 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       endsAt: result.endsAt.toISOString(),
+      debug: {
+        authedUserId: authedUser.id,
+        requestedWalletAddress,
+        serverWalletAddress: wallet.address,
+      },
     });
   } catch (err) {
     console.error("mining/start error:", err);
-    return NextResponse.json({ ok: false, error: "Start failed" }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Start failed",
+      },
+      { status: 500 }
+    );
   }
 }
