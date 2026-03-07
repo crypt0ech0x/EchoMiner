@@ -18,16 +18,16 @@ export default function EchoMinerApp() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
-  // Smooth UI clock so earnings animate
   const [now, setNow] = useState(() => Date.now());
+
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
 
-  // Initial load
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         setLoadError(null);
@@ -40,12 +40,12 @@ export default function EchoMinerApp() {
         setLoadError(e?.message || "Failed to load state");
       }
     })();
+
     return () => {
       mounted = false;
     };
   }, []);
 
-  // Server refresh loop (don’t spam)
   useEffect(() => {
     if (!state?.session?.isActive) return;
 
@@ -63,23 +63,29 @@ export default function EchoMinerApp() {
 
   const effectiveRatePerSec = state?.session?.effectiveRate ?? 0;
 
-  // What MineTab should display as “+ECHO”
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
     const base = Number(state.session.sessionMined ?? 0);
-
     const lastAccruedAt = state.session.lastAccruedAt ?? null;
     if (!lastAccruedAt) return base;
 
     const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
     return base + deltaSec * effectiveRatePerSec;
-  }, [state?.session?.isActive, state?.session?.sessionMined, state?.session?.lastAccruedAt, now, effectiveRatePerSec]);
+  }, [
+    state?.session?.isActive,
+    state?.session?.sessionMined,
+    state?.session?.lastAccruedAt,
+    now,
+    effectiveRatePerSec,
+  ]);
 
   if (loadError) {
     return (
       <div className="h-screen bg-background flex flex-col items-center justify-center text-center p-8">
-        <div className="text-white/70 font-black tracking-widest mb-3">Couldn’t load</div>
+        <div className="text-white/70 font-black tracking-widest mb-3">
+          Couldn’t load
+        </div>
         <div className="text-white/40 text-sm mb-6">{loadError}</div>
         <button
           className="px-5 py-3 rounded-xl bg-white/10 text-white font-bold"
@@ -125,7 +131,11 @@ export default function EchoMinerApp() {
             state={state}
             sessionEarnings={sessionEarnings}
             effectiveRate={effectiveRatePerSec}
-            totalMultiplier={state.session?.baseRate ? state.session.effectiveRate / state.session.baseRate : 1}
+            totalMultiplier={
+              state.session?.baseRate
+                ? state.session.effectiveRate / state.session.baseRate
+                : 1
+            }
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
             onStartSession={async () => setState(await EchoAPI.startSession())}
@@ -140,17 +150,22 @@ export default function EchoMinerApp() {
           />
         )}
 
-        {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
+        {activeTab === Tab.STORE && (
+          <StoreTab state={state} onPurchase={setState} />
+        )}
 
         {activeTab === Tab.WALLET && (
           <WalletTab
             totalMinedEcho={state.user.totalMined}
             walletFromServer={{
-              address: state.wallet.address,
-              verified: state.wallet.verified,
-              verifiedAt: state.wallet.verifiedAt,
+              address: state.wallet?.address ?? null,
+              verified: !!state.wallet?.verified,
+              verifiedAt: state.wallet?.verifiedAt ?? null,
             }}
-            onVerified={async () => setState(await EchoAPI.getState())}
+            onVerified={async () => {
+              const fresh = await EchoAPI.getState();
+              setState(fresh);
+            }}
           />
         )}
       </Layout>
