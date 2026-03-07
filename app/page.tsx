@@ -158,16 +158,16 @@ export default function EchoMinerApp() {
           <WalletTab
             totalMinedEcho={state.user.totalMined}
             walletFromServer={{
-              address: state.wallet?.address ?? null,
-              verified: !!state.wallet?.verified,
-              verifiedAt: state.wallet?.verifiedAt ?? null,
-            }}
+            address: state.wallet?.address ?? null,
+            verified: !!state.wallet?.verified,
+            verifiedAt: state.wallet?.verifiedAt ?? null,
+        }}
             onVerified={async () => {
-              const fresh = await EchoAPI.getState();
-              setState(fresh);
-            }}
-          />
-        )}
+        const fresh = await EchoAPI.getState();
+            setState(fresh);
+        }}
+      />
+    )}
       </Layout>
 
       <ProfileDrawer
