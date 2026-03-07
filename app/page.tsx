@@ -33,6 +33,10 @@ export default function EchoMinerApp() {
   }, []);
 
   useEffect(() => {
+    EchoAPI.setConnectedWalletAddress(connectedWalletAddress);
+  }, [connectedWalletAddress]);
+
+  useEffect(() => {
     let mounted = true;
 
     (async () => {
@@ -72,7 +76,7 @@ export default function EchoMinerApp() {
         const updated = await EchoAPI.refreshState();
         setState(updated);
       } catch {
-        // ignore transient refresh errors
+        // ignore
       }
     }, 4000);
 
@@ -175,24 +179,43 @@ export default function EchoMinerApp() {
                 });
                 setState(updated);
               } catch (e: any) {
+                if (e?.status === 409 && e?.data?.error === "Wallet session mismatch") {
+                  try {
+                    localStorage.removeItem(EchoAPI.STORAGE_KEY);
+                  } catch {
+                    // ignore
+                  }
+
+                  try {
+                    await fetch("/api/auth/logout", {
+                      method: "POST",
+                      credentials: "same-origin",
+                    });
+                  } catch {
+                    // ignore
+                  }
+
+                  try {
+                    const fresh = await EchoAPI.getState();
+                    setState(fresh);
+                  } catch {
+                    // ignore
+                  }
+
+                  setActiveTab(Tab.WALLET);
+                  return;
+                }
+
+                if (e?.status === 401) {
+                  setActiveTab(Tab.WALLET);
+                  return;
+                }
+
                 try {
                   const fresh = await EchoAPI.getState();
                   setState(fresh);
-
-                  if (!fresh.authed) {
-                    setActiveTab(Tab.WALLET);
-                    return;
-                  }
-
-                  if (
-                    connectedWalletAddress &&
-                    fresh.wallet?.address &&
-                    connectedWalletAddress !== fresh.wallet.address
-                  ) {
-                    setActiveTab(Tab.WALLET);
-                  }
                 } catch {
-                  // ignore secondary failure
+                  // ignore
                 }
 
                 console.error("start session failed:", e);
