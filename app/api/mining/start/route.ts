@@ -12,7 +12,7 @@ type Body = {
   walletAddress?: string;
 };
 
-const SESSION_DURATION_SECONDS = 60 * 60 * 24;
+const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
 const DEFAULT_BASE_RATE_PER_HR = 1;
 
 function clamp(n: number, min: number, max: number) {
@@ -24,10 +24,40 @@ function round6(n: number) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    ok: true,
-    info: "Use POST to start a mining session.",
-  });
+  try {
+    const sessionCheck = await requireMatchingWalletSession(null);
+
+    if (!sessionCheck.ok) {
+      const error = sessionCheck.error;
+      const serverWalletAddress = sessionCheck.serverWalletAddress ?? null;
+
+      return NextResponse.json(
+        {
+          ok: false,
+          method: "GET",
+          error,
+          serverWalletAddress,
+        },
+        { status: sessionCheck.status }
+      );
+    }
+
+    const session = await prisma.miningSession.findUnique({
+      where: { userId: sessionCheck.user.id },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      method: "GET",
+      authedUserId: sessionCheck.user.id,
+      serverWalletAddress: sessionCheck.walletAddress,
+      session,
+      note: "Use POST to actually start a mining session.",
+    });
+  } catch (err) {
+    console.error("mining/start GET error:", err);
+    return NextResponse.json({ ok: false, error: "Debug failed" }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -39,17 +69,24 @@ export async function POST(req: Request) {
       body = {};
     }
 
-    const sessionCheck = await requireMatchingWalletSession(body.walletAddress);
+    const requestedWalletAddress = (body.walletAddress ?? "").trim();
+
+    const sessionCheck = await requireMatchingWalletSession(requestedWalletAddress);
 
     if (!sessionCheck.ok) {
+      const error = sessionCheck.error;
+      const serverWalletAddress = sessionCheck.serverWalletAddress ?? null;
+      const requestedWalletAddressOut = sessionCheck.requestedWalletAddress ?? null;
+      const status = sessionCheck.status;
+
       return NextResponse.json(
         {
           ok: false,
-          error: sessionCheck.error,
-          serverWalletAddress: sessionCheck.serverWalletAddress ?? null,
-          requestedWalletAddress: sessionCheck.requestedWalletAddress ?? null,
+          error,
+          serverWalletAddress,
+          requestedWalletAddress: requestedWalletAddressOut,
         },
-        { status: sessionCheck.status }
+        { status }
       );
     }
 
@@ -78,13 +115,11 @@ export async function POST(req: Request) {
 
     const result = await prisma.$transaction(async (tx) => {
       const existing = await tx.miningSession.findUnique({
-        where: { userId: authedUser!.id },
+        where: { userId: authedUser.id },
       });
 
       if (existing?.isActive && existing.startedAt) {
-        const endsAt = new Date(
-          existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000
-        );
+        const endsAt = new Date(existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
         if (now.getTime() < endsAt.getTime()) {
           return {
@@ -106,7 +141,7 @@ export async function POST(req: Request) {
         const earned = round6(Math.max(0, safeDeltaSeconds * ratePerSec));
 
         const settledSession = await tx.miningSession.update({
-          where: { userId: authedUser!.id },
+          where: { userId: authedUser.id },
           data: {
             sessionMined: { increment: earned },
             lastAccruedAt: effectiveNow,
@@ -115,13 +150,13 @@ export async function POST(req: Request) {
         });
 
         await tx.user.update({
-          where: { id: authedUser!.id },
+          where: { id: authedUser.id },
           data: { totalMinedEcho: { increment: earned } },
         });
 
         await tx.miningHistory.create({
           data: {
-            userId: authedUser!.id,
+            userId: authedUser.id,
             startedAt: existing.startedAt,
             endedAt: endsAt,
             baseRatePerHr: existing.baseRatePerHr,
@@ -131,7 +166,7 @@ export async function POST(req: Request) {
         });
 
         await tx.miningSession.update({
-          where: { userId: authedUser!.id },
+          where: { userId: authedUser.id },
           data: {
             isActive: false,
             startedAt: null,
@@ -147,7 +182,7 @@ export async function POST(req: Request) {
       const endsAt = new Date(startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
       const session = await tx.miningSession.upsert({
-        where: { userId: authedUser!.id },
+        where: { userId: authedUser.id },
         update: {
           isActive: true,
           startedAt,
@@ -157,7 +192,7 @@ export async function POST(req: Request) {
           sessionMined: 0,
         },
         create: {
-          userId: authedUser!.id,
+          userId: authedUser.id,
           isActive: true,
           startedAt,
           lastAccruedAt: startedAt,
