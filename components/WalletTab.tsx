@@ -21,14 +21,8 @@ type WalletFromServer = {
 
 type Props = {
   totalMinedEcho?: number;
-
-  // legacy prop (some older parent code used this)
   verifiedWalletAddress?: string | null;
-
-  // preferred prop
   walletFromServer?: WalletFromServer;
-
-  // parent must refetch server state after verify/login changes
   onVerified?: () => void;
 };
 
@@ -59,7 +53,6 @@ export default function WalletTab({
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
-  // Source of truth from server (preferred)
   const serverAddress = walletFromServer?.address ?? verifiedWalletAddress ?? null;
   const serverVerified =
     walletFromServer?.verified ?? (verifiedWalletAddress ? true : false);
@@ -67,24 +60,20 @@ export default function WalletTab({
   const serverMismatch =
     !!address && !!serverAddress && serverAddress !== address;
 
-  // 1) Sync verified state from server
   useEffect(() => {
     if (!connected || !address) {
       setIsVerified(false);
       return;
     }
 
-    // if server says verified AND same wallet, we're verified
     if (serverVerified && serverAddress === address) {
       setIsVerified(true);
       return;
     }
 
-    // otherwise not verified (yet)
     setIsVerified(false);
   }, [connected, address, serverVerified, serverAddress]);
 
-  // 2) Local fallback so tab switching doesn't instantly re-prompt
   useEffect(() => {
     if (!connected || !address) return;
     if (serverVerified && serverAddress === address) return;
@@ -97,7 +86,6 @@ export default function WalletTab({
     }
   }, [connected, address, serverVerified, serverAddress]);
 
-  // 3) Clear UI on disconnect
   useEffect(() => {
     if (!connected) {
       setIsVerified(false);
@@ -106,7 +94,6 @@ export default function WalletTab({
     }
   }, [connected]);
 
-  // 4) Load SOL balance
   useEffect(() => {
     let cancelled = false;
 
@@ -115,6 +102,7 @@ export default function WalletTab({
         setSolBalance(null);
         return;
       }
+
       try {
         const lamports = await connection.getBalance(publicKey, {
           commitment: "confirmed",
@@ -126,6 +114,7 @@ export default function WalletTab({
     }
 
     loadBalance();
+
     return () => {
       cancelled = true;
     };
@@ -144,27 +133,30 @@ export default function WalletTab({
     }
   }
 
-  // --- IMPORTANT PATCH: isolate per-wallet “login” by clearing local cache + session ---
   async function logoutAndClearLocal() {
     setError(null);
     setIsSwitching(true);
 
     try {
-      // clear local cached app state (prevents cross-wallet bleed)
       try {
         localStorage.removeItem(APP_STATE_KEY);
-      } catch {}
+      } catch {
+        // ignore
+      }
 
-      // clear "verified" cache for this wallet (and optionally the server wallet)
       try {
         if (address) localStorage.removeItem(verifiedKey(address));
         if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-      } catch {}
+      } catch {
+        // ignore
+      }
 
-      // revoke server cookie session
-      await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+      }).catch(() => null);
 
-      // ask parent to refetch /api/state (becomes the new truth)
+      setIsVerified(false);
       onVerified?.();
     } finally {
       setIsSwitching(false);
@@ -178,6 +170,14 @@ export default function WalletTab({
       setError("Connect your wallet first.");
       return;
     }
+
+    if (serverMismatch) {
+      setError(
+        "You are still logged in as a different wallet. Tap “Switch Login to This Wallet” first."
+      );
+      return;
+    }
+
     if (!signMessage) {
       setError("This wallet does not support message signing. Try Phantom or Solflare.");
       return;
@@ -190,6 +190,7 @@ export default function WalletTab({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+        credentials: "include",
       });
 
       if (!challengeRes.ok) {
@@ -198,7 +199,6 @@ export default function WalletTab({
 
       const { nonce } = (await challengeRes.json()) as { nonce: string };
 
-      // ASCII-only message (avoid weird iOS encoding)
       const message =
         "ECHO Wallet Verification\n" +
         `Wallet: ${publicKey.toBase58()}\n` +
@@ -217,6 +217,7 @@ export default function WalletTab({
           message,
           signature: Array.from(signature),
         }),
+        credentials: "include",
       });
 
       if (!verifyRes.ok) {
@@ -224,14 +225,13 @@ export default function WalletTab({
         throw new Error(data?.error || "Verification failed.");
       }
 
-      // local cache so tab switching doesn't instantly prompt again
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {}
+      } catch {
+        // ignore
+      }
 
       setIsVerified(true);
-
-      // critical: parent refetch -> server truth
       onVerified?.();
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
@@ -288,8 +288,7 @@ export default function WalletTab({
               <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
                 {wallet?.adapter?.name ?? "Wallet"}{" "}
                 <span className="text-white/15">|</span>{" "}
-                SOL:{" "}
-                {solBalance === null ? "..." : solBalance.toFixed(4)}
+                SOL: {solBalance === null ? "..." : solBalance.toFixed(4)}
               </div>
             </div>
 
@@ -306,7 +305,6 @@ export default function WalletTab({
               </button>
             </div>
 
-            {/* If the server session is tied to a different wallet, show a switch action */}
             {serverMismatch && (
               <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-4">
                 <div className="text-[11px] font-black text-orange-300 uppercase tracking-widest mb-2">
@@ -347,7 +345,9 @@ export default function WalletTab({
             </div>
 
             <button
-              onClick={() => window.open(explorerUrl(address), "_blank", "noopener,noreferrer")}
+              onClick={() =>
+                window.open(explorerUrl(address), "_blank", "noopener,noreferrer")
+              }
               className="w-full h-12 rounded-2xl glass border border-white/10 text-xs font-black uppercase tracking-widest text-white/70 hover:bg-white/5 flex items-center justify-center gap-2"
             >
               <ExternalLink className="w-4 h-4" />
