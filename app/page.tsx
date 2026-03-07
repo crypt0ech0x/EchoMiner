@@ -66,7 +66,6 @@ export default function EchoMinerApp() {
     }
   }, [connectedWalletAddress, serverWalletAddress]);
 
-  // Refresh mining state while active
   useEffect(() => {
     if (!state?.session?.isActive) return;
 
@@ -86,8 +85,6 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
-  // Same display logic as mine screen:
-  // DB sessionMined + smoothing since lastAccruedAt
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -169,14 +166,15 @@ export default function EchoMinerApp() {
             currentTime={now}
             onOpenBoosts={() => setActiveTab(Tab.BOOST)}
             onStartSession={async () => {
-              // Only block if there is a real, known wallet mismatch
               if (walletMismatch) {
                 setActiveTab(Tab.WALLET);
                 return;
               }
 
               try {
-                const updated = await EchoAPI.startSession();
+                const updated = await EchoAPI.startSession({
+                  walletAddress: connectedWalletAddress ?? undefined,
+                });
                 setState(updated);
               } catch (e: any) {
                 try {
@@ -185,9 +183,18 @@ export default function EchoMinerApp() {
 
                   if (!fresh.authed) {
                     setActiveTab(Tab.WALLET);
+                    return;
+                  }
+
+                  if (
+                    connectedWalletAddress &&
+                    fresh.wallet?.address &&
+                    connectedWalletAddress !== fresh.wallet.address
+                  ) {
+                    setActiveTab(Tab.WALLET);
                   }
                 } catch {
-                  // leave UI as-is if even state refresh fails
+                  // ignore secondary failure
                 }
 
                 console.error("start session failed:", e);
