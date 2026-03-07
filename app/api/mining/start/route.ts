@@ -6,7 +6,11 @@ import { getUserFromSessionCookie } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = { baseRatePerHr?: number; multiplier?: number };
+type Body = {
+  baseRatePerHr?: number;
+  multiplier?: number;
+  walletAddress?: string;
+};
 
 const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
 const DEFAULT_BASE_RATE_PER_HR = 1;
@@ -26,21 +30,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Not logged in" }, { status: 401 });
     }
 
-    // Re-check wallet verification from DB (don’t trust cookie shape)
+    let body: Body = {};
+    try {
+      body = (await req.json()) as Body;
+    } catch {
+      body = {};
+    }
+
+    const requestedWalletAddress = (body.walletAddress ?? "").trim();
+
     const wallet = await prisma.wallet.findFirst({
       where: { userId: authedUser.id },
-      select: { verified: true },
+      select: { address: true, verified: true },
     });
 
     if (!wallet?.verified) {
       return NextResponse.json({ ok: false, error: "Wallet not verified" }, { status: 401 });
     }
 
-    let body: Body = {};
-    try {
-      body = (await req.json()) as Body;
-    } catch {
-      body = {};
+    // Critical: prevent starting for the wrong cookie user
+    if (
+      requestedWalletAddress &&
+      wallet.address &&
+      requestedWalletAddress !== wallet.address
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Wallet session mismatch",
+          serverWalletAddress: wallet.address,
+          requestedWalletAddress,
+        },
+        { status: 409 }
+      );
     }
 
     const baseRatePerHr =
@@ -61,11 +83,9 @@ export async function POST(req: Request) {
         where: { userId: authedUser.id },
       });
 
-      // If there is an active session, decide what to do before starting a new one.
       if (existing?.isActive && existing.startedAt) {
         const endsAt = new Date(existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
-        // Still running -> do NOT overwrite it (this is the “lost previous session” bug)
         if (now.getTime() < endsAt.getTime()) {
           return {
             kind: "already_active" as const,
@@ -74,17 +94,17 @@ export async function POST(req: Request) {
           };
         }
 
-        // Session should have ended -> settle remaining accrual, archive, reset
         const lastAccruedAt = existing.lastAccruedAt ?? existing.startedAt;
-        const effectiveNow = endsAt; // settle to end boundary
+        const effectiveNow = endsAt;
 
-        const deltaSeconds = Math.floor((effectiveNow.getTime() - lastAccruedAt.getTime()) / 1000);
+        const deltaSeconds = Math.floor(
+          (effectiveNow.getTime() - lastAccruedAt.getTime()) / 1000
+        );
         const safeDeltaSeconds = clamp(deltaSeconds, 0, SESSION_DURATION_SECONDS);
 
         const ratePerSec = (existing.baseRatePerHr * existing.multiplier) / 3600;
         const earned = round6(Math.max(0, safeDeltaSeconds * ratePerSec));
 
-        // Apply final accrual to session + user total
         const settledSession = await tx.miningSession.update({
           where: { userId: authedUser.id },
           data: {
@@ -94,13 +114,11 @@ export async function POST(req: Request) {
           },
         });
 
-        const updatedUser = await tx.user.update({
+        await tx.user.update({
           where: { id: authedUser.id },
           data: { totalMinedEcho: { increment: earned } },
-          select: { totalMinedEcho: true },
         });
 
-        // Archive
         await tx.miningHistory.create({
           data: {
             userId: authedUser.id,
@@ -112,7 +130,6 @@ export async function POST(req: Request) {
           },
         });
 
-        // Reset row for clean next start
         await tx.miningSession.update({
           where: { userId: authedUser.id },
           data: {
@@ -124,12 +141,8 @@ export async function POST(req: Request) {
             multiplier: 1,
           },
         });
-
-        // (Optional) you can return updatedUser.totalMinedEcho if you want
-        void updatedUser;
       }
 
-      // Start a fresh session (upsert)
       const startedAt = now;
       const endsAt = new Date(startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
 
