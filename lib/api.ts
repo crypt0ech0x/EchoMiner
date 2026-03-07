@@ -210,8 +210,7 @@ export const EchoAPI = {
   },
 
   async refreshState(): Promise<AppState> {
-    // refresh endpoint returns a partial payload in your current backend,
-    // so re-fetch canonical state after accrual
+    // Refresh route is mutation-first. Re-read canonical state after.
     await fetchJson("/api/mining/refresh", { method: "POST" });
     return await this.getState();
   },
