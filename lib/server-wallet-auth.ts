@@ -2,19 +2,27 @@
 import { prisma } from "@/lib/prisma";
 import { getUserFromSessionCookie } from "@/lib/auth";
 
-export type WalletSessionCheck =
-  | {
-      ok: true;
-      user: Awaited<ReturnType<typeof getUserFromSessionCookie>>;
-      walletAddress: string;
-    }
-  | {
-      ok: false;
-      status: 401 | 409;
-      error: string;
-      serverWalletAddress?: string | null;
-      requestedWalletAddress?: string | null;
-    };
+export type WalletSessionOk = {
+  ok: true;
+  user: NonNullable<Awaited<ReturnType<typeof getUserFromSessionCookie>>>;
+  walletAddress: string;
+};
+
+export type WalletSessionErr = {
+  ok: false;
+  status: 401 | 409;
+  error: string;
+  serverWalletAddress?: string | null;
+  requestedWalletAddress?: string | null;
+};
+
+export type WalletSessionCheck = WalletSessionOk | WalletSessionErr;
+
+export function isWalletSessionErr(
+  value: WalletSessionCheck
+): value is WalletSessionErr {
+  return value.ok === false;
+}
 
 export async function requireMatchingWalletSession(
   requestedWalletAddress?: string | null
@@ -40,20 +48,20 @@ export async function requireMatchingWalletSession(
       ok: false,
       status: 401,
       error: "Wallet not verified",
-      requestedWalletAddress: requestedWalletAddress ?? null,
       serverWalletAddress: wallet?.address ?? null,
+      requestedWalletAddress: requestedWalletAddress ?? null,
     };
   }
 
-  const normalizedRequested = (requestedWalletAddress ?? "").trim();
+  const requested = (requestedWalletAddress ?? "").trim();
 
-  if (normalizedRequested && normalizedRequested !== wallet.address) {
+  if (requested && requested !== wallet.address) {
     return {
       ok: false,
       status: 409,
       error: "Wallet session mismatch",
-      requestedWalletAddress: normalizedRequested,
       serverWalletAddress: wallet.address,
+      requestedWalletAddress: requested,
     };
   }
 
