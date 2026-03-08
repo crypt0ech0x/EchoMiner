@@ -61,11 +61,11 @@ export default function AdminDbPage() {
 
   async function load() {
     try {
-      const res = await fetch("/api/admin/analytics");
+      const res = await fetch("/api/admin/analytics", {
         method: "GET",
         credentials: "include",
         cache: "no-store",
-      });
+  });
 
       const data = await res.json().catch(() => null);
 
