@@ -14,6 +14,7 @@ type Row = {
   endingSoon: boolean;
   baseRatePerHr: number;
   multiplier: number;
+  liveMultiplier: number;
   startedAt: string | null;
 };
 
@@ -36,11 +37,17 @@ type Activity = {
 type DailyEmission = {
   date: string;
   emitted: number;
+  cumulative: number;
 };
 
 type AnalyticsResponse = {
   ok: boolean;
   generatedAt: string;
+  range: {
+    days: number;
+    startDate: string;
+    endDate: string;
+  };
   summary: Summary;
   activity: Activity;
   charts: {
@@ -136,43 +143,64 @@ function Leaderboard({
 }
 
 function EmissionsChart({ points }: { points: DailyEmission[] }) {
-  const width = 900;
-  const height = 260;
-  const pad = 28;
+  const width = 960;
+  const height = 300;
+  const padLeft = 36;
+  const padRight = 18;
+  const padTop = 20;
+  const padBottom = 40;
 
-  const maxY = Math.max(...points.map((p) => p.emitted), 1);
-  const innerW = width - pad * 2;
-  const innerH = height - pad * 2;
+  const maxBar = Math.max(...points.map((p) => p.emitted), 1);
+  const maxLine = Math.max(...points.map((p) => p.cumulative), 1);
 
-  const barW = innerW / Math.max(points.length, 1) - 8;
+  const innerW = width - padLeft - padRight;
+  const innerH = height - padTop - padBottom;
+  const step = points.length > 1 ? innerW / points.length : innerW;
+  const barW = Math.max(10, step - 10);
+
+  const linePoints = points
+    .map((p, i) => {
+      const x = padLeft + i * step + barW / 2;
+      const y = padTop + innerH - (p.cumulative / maxLine) * innerH;
+      return `${x},${y}`;
+    })
+    .join(" ");
 
   return (
     <div className="rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-5">
       <div className="flex items-center justify-between mb-4">
-        <div className="text-sm font-black text-white">Daily Emissions</div>
-        <div className="text-xs text-white/35">Last 14 days</div>
+        <div className="text-sm font-black text-white">Daily Emissions + Cumulative</div>
+        <div className="text-xs text-white/35">Bars = daily, line = cumulative</div>
       </div>
 
       <div className="overflow-x-auto">
-        <svg width={width} height={height} className="min-w-[900px]">
-          <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="rgba(255,255,255,0.15)" />
+        <svg width={width} height={height} className="min-w-[960px]">
+          <line
+            x1={padLeft}
+            y1={height - padBottom}
+            x2={width - padRight}
+            y2={height - padBottom}
+            stroke="rgba(255,255,255,0.15)"
+          />
+
           {points.map((p, i) => {
-            const h = (p.emitted / maxY) * (innerH - 10);
-            const x = pad + i * (innerW / points.length) + 4;
-            const y = height - pad - h;
+            const h = (p.emitted / maxBar) * (innerH - 10);
+            const x = padLeft + i * step + 4;
+            const y = padTop + innerH - h;
+
             return (
               <g key={p.date}>
                 <rect
                   x={x}
                   y={y}
-                  width={Math.max(barW, 8)}
+                  width={barW}
                   height={h}
                   rx={8}
-                  fill="rgba(255,255,255,0.75)"
+                  fill="rgba(255,255,255,0.65)"
                 />
                 <text
-                  x={x + Math.max(barW, 8) / 2}
-                  y={height - 8}
+                  x={x + barW / 2}
+                  y={height - 10}
                   textAnchor="middle"
                   fontSize="10"
                   fill="rgba(255,255,255,0.45)"
@@ -181,6 +209,19 @@ function EmissionsChart({ points }: { points: DailyEmission[] }) {
                 </text>
               </g>
             );
+          })}
+
+          <polyline
+            fill="none"
+            stroke="rgb(34,197,94)"
+            strokeWidth="3"
+            points={linePoints}
+          />
+
+          {points.map((p, i) => {
+            const x = padLeft + i * step + barW / 2;
+            const y = padTop + innerH - (p.cumulative / maxLine) * innerH;
+            return <circle key={`${p.date}-dot`} cx={x} cy={y} r={3.5} fill="rgb(34,197,94)" />;
           })}
         </svg>
       </div>
@@ -192,10 +233,11 @@ export default function AdminDbPage() {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(14);
 
-  async function load() {
+  async function load(selectedDays = days) {
     try {
-      const res = await fetch("/api/admin/analytics", {
+      const res = await fetch(`/api/admin/analytics?days=${selectedDays}`, {
         method: "GET",
         credentials: "include",
         cache: "no-store",
@@ -217,10 +259,10 @@ export default function AdminDbPage() {
   }
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 5000);
+    load(days);
+    const id = setInterval(() => load(days), 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [days]);
 
   const sortedRows = useMemo(() => {
     const rows = data?.rows ?? [];
@@ -234,21 +276,39 @@ export default function AdminDbPage() {
   return (
     <div className="min-h-screen bg-[#05070b] text-white">
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-3xl font-black tracking-tight text-white">Admin Analytics</h1>
-            <p className="text-sm text-white/45 mt-2">Canonical mining, emissions, and wallet overview</p>
+            <p className="text-sm text-white/45 mt-2">
+              Canonical mining, emissions, and wallet overview
+            </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="rounded-2xl border border-white/15 bg-white/[0.05] px-3 py-2">
+              <label className="text-xs text-white/45 mr-2">Range</label>
+              <select
+                value={days}
+                onChange={(e) => setDays(Number(e.target.value))}
+                className="bg-transparent text-white outline-none"
+              >
+                <option value={7} className="bg-black">7d</option>
+                <option value={14} className="bg-black">14d</option>
+                <option value={30} className="bg-black">30d</option>
+                <option value={60} className="bg-black">60d</option>
+                <option value={90} className="bg-black">90d</option>
+              </select>
+            </div>
+
             <a
               href="/api/admin/snapshot"
               className="px-4 py-2 rounded-2xl bg-white text-black font-bold"
             >
               Export Snapshot CSV
             </a>
+
             <button
-              onClick={load}
+              onClick={() => load(days)}
               className="px-4 py-2 rounded-2xl border border-white/15 bg-white/[0.05] text-white font-bold"
             >
               Refresh
@@ -314,6 +374,7 @@ export default function AdminDbPage() {
                       <th className="p-4 font-black">Live Session</th>
                       <th className="p-4 font-black">Live Total</th>
                       <th className="p-4 font-black">Rate</th>
+                      <th className="p-4 font-black">Live Multiplier</th>
                       <th className="p-4 font-black">Started</th>
                       <th className="p-4 font-black">Status</th>
                     </tr>
@@ -356,10 +417,17 @@ export default function AdminDbPage() {
                           {row.sessionActive ? (
                             <div>
                               <div>{fmtNum(row.baseRatePerHr, 4)} E/H</div>
-                              <div className="text-xs text-white/35">
-                                x{fmtNum(row.multiplier, 2)}
-                              </div>
                             </div>
+                          ) : (
+                            <span className="text-white/35">—</span>
+                          )}
+                        </td>
+
+                        <td className="p-4">
+                          {row.sessionActive ? (
+                            <span className="font-bold text-cyan-300">
+                              x{fmtNum(row.liveMultiplier, 2)}
+                            </span>
                           ) : (
                             <span className="text-white/35">—</span>
                           )}
@@ -381,7 +449,7 @@ export default function AdminDbPage() {
 
                     {!sortedRows.length && !loading && (
                       <tr>
-                        <td className="p-6 text-white/35" colSpan={8}>
+                        <td className="p-6 text-white/35" colSpan={9}>
                           No wallets found.
                         </td>
                       </tr>
