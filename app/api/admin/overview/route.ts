@@ -29,7 +29,7 @@ export async function GET() {
       new Set(wallets.map((w) => w.userId).filter(Boolean))
     ) as string[];
 
-    // First settle all users so admin reflects canonical totals
+    // Settle everyone first so totals are canonical
     for (const userId of userIds) {
       await settleMiningSession(userId, now);
     }
@@ -68,20 +68,22 @@ export async function GET() {
         now.getTime() < getSessionEndsAt(session.startedAt).getTime();
 
       const totalMinedEcho = Number(user?.totalMinedEcho ?? 0);
-      const totalPurchasedEcho = 0;
-      const totalEcho = totalMinedEcho + totalPurchasedEcho;
+      const liveSessionMined = active ? Number(session?.sessionMined ?? 0) : 0;
+
+      // totalMinedEcho already includes the active session earnings after settlement
+      const previousTotal = Math.max(0, totalMinedEcho - liveSessionMined);
+      const liveTotal = totalMinedEcho;
 
       return {
         wallet: wallet.address,
         verified: wallet.verified,
         verifiedAt: wallet.verifiedAt ? wallet.verifiedAt.toISOString() : null,
 
-        totalPurchasedEcho,
-        totalMinedEcho,
-        totalEcho,
+        previousTotal,
+        liveTotal,
 
         sessionActive: active,
-        liveSessionMined: active ? Number(session?.sessionMined ?? 0) : 0,
+        liveSessionMined,
         baseRatePerHr: active ? Number(session?.baseRatePerHr ?? 0) : 0,
         multiplier: active ? Number(session?.multiplier ?? 1) : 1,
         startedAt: active && session?.startedAt ? session.startedAt.toISOString() : null,
@@ -97,9 +99,8 @@ export async function GET() {
     const totals = {
       wallets: rows.length,
       activeSessions: rows.filter((r) => r.sessionActive).length,
-      totalMinedEcho: rows.reduce((sum, r) => sum + r.totalMinedEcho, 0),
-      totalPurchasedEcho: rows.reduce((sum, r) => sum + r.totalPurchasedEcho, 0),
-      totalEcho: rows.reduce((sum, r) => sum + r.totalEcho, 0),
+      previousTotal: rows.reduce((sum, r) => sum + r.previousTotal, 0),
+      liveTotal: rows.reduce((sum, r) => sum + r.liveTotal, 0),
     };
 
     return json({
