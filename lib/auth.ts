@@ -27,8 +27,8 @@ function cookieOptions(maxAgeSeconds?: number) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
+    domain: ".echominer.fun",   // 🔑 CRITICAL FIX
     ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
-    ...(cookieDomain() ? { domain: cookieDomain() } : {}),
   };
 }
 
