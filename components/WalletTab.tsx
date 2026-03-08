@@ -73,18 +73,6 @@ export default function WalletTab({
   }, [connected, address, serverVerified, serverAddress]);
 
   useEffect(() => {
-    if (!connected || !address) return;
-    if (serverVerified && serverAddress === address) return;
-
-    try {
-      const saved = localStorage.getItem(verifiedKey(address));
-      if (saved === "1") setIsVerified(true);
-    } catch {
-      // ignore
-    }
-  }, [connected, address, serverVerified, serverAddress]);
-
-  useEffect(() => {
     if (!connected) {
       setIsVerified(false);
       setSolBalance(null);
@@ -105,9 +93,14 @@ export default function WalletTab({
         const lamports = await connection.getBalance(publicKey, {
           commitment: "confirmed",
         });
-        if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
+
+        if (!cancelled) {
+          setSolBalance(lamports / LAMPORTS_PER_SOL);
+        }
       } catch {
-        if (!cancelled) setSolBalance(null);
+        if (!cancelled) {
+          setSolBalance(null);
+        }
       }
     }
 
@@ -133,16 +126,12 @@ export default function WalletTab({
   async function clearLocalWalletState() {
     try {
       localStorage.removeItem(EchoAPI.STORAGE_KEY);
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     try {
       if (address) localStorage.removeItem(verifiedKey(address));
       if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   async function logoutOldServerSessionIfNeeded() {
@@ -152,7 +141,7 @@ export default function WalletTab({
 
     await fetch("/api/auth/logout", {
       method: "POST",
-      credentials: "same-origin",
+      credentials: "include",
     }).catch(() => null);
 
     setIsVerified(false);
@@ -171,7 +160,9 @@ export default function WalletTab({
     }
 
     if (!signMessage) {
-      setError("This wallet does not support message signing. Try Phantom or Solflare.");
+      setError(
+        "This wallet does not support message signing. Try Phantom or Solflare."
+      );
       return;
     }
 
@@ -187,22 +178,24 @@ export default function WalletTab({
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-        credentials: "same-origin",
+        credentials: "include",
+        body: JSON.stringify({
+          walletAddress: publicKey.toBase58(),
+        }),
       });
 
       if (!challengeRes.ok) {
         const data = await challengeRes.json().catch(() => null);
-        throw new Error(data?.error || "Could not start verification. Try again.");
+        throw new Error(data?.error || "Could not start verification.");
       }
 
-      const { nonce } = (await challengeRes.json()) as { nonce: string };
+      const { nonce } = await challengeRes.json();
 
       const message =
         "ECHO Wallet Verification\n" +
         `Wallet: ${publicKey.toBase58()}\n` +
-        `Nonce: ${nonce}\n` +
-        "\nBy signing this message, you verify ownership for ECHO eligibility.";
+        `Nonce: ${nonce}\n\n` +
+        "By signing this message, you verify ownership for ECHO eligibility.";
 
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
@@ -210,13 +203,13 @@ export default function WalletTab({
       const verifyRes = await fetch("/api/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           publicKey: publicKey.toBase58(),
           nonce,
           message,
           signature: Array.from(signature),
         }),
-        credentials: "same-origin",
       });
 
       if (!verifyRes.ok) {
@@ -226,15 +219,16 @@ export default function WalletTab({
 
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {
-        // ignore
-      }
+      } catch {}
 
       setIsVerified(true);
 
       if (onVerified) {
         await onVerified();
       }
+
+      // CRITICAL: reload so server auth cookie is picked up
+      window.location.reload();
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
     } finally {
@@ -250,8 +244,11 @@ export default function WalletTab({
         <div className="w-11 h-11 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
           <WalletIcon className="w-5 h-5 text-white/70" />
         </div>
+
         <div>
-          <h2 className="text-lg font-black text-white tracking-tight">Wallet</h2>
+          <h2 className="text-lg font-black text-white tracking-tight">
+            Wallet
+          </h2>
           <p className="text-xs text-white/40 font-bold">
             Secure your ECHO for the mainnet airdrop.
           </p>
@@ -263,6 +260,7 @@ export default function WalletTab({
           <div className="text-xs font-black text-white/60 uppercase tracking-widest">
             Solana Wallet Connection
           </div>
+
           <WalletMultiButton />
         </div>
 
@@ -288,9 +286,8 @@ export default function WalletTab({
               </div>
 
               <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
-                {wallet?.adapter?.name ?? "Wallet"}{" "}
-                <span className="text-white/15">|</span>{" "}
-                SOL: {solBalance === null ? "..." : solBalance.toFixed(4)}
+                {wallet?.adapter?.name ?? "Wallet"} | SOL:{" "}
+                {solBalance === null ? "..." : solBalance.toFixed(4)}
               </div>
             </div>
 
@@ -298,74 +295,25 @@ export default function WalletTab({
               <div className="font-mono text-xs text-white/80 truncate">
                 {address}
               </div>
+
               <button
                 onClick={() => copyToClipboard(address)}
-                className="text-white/30 hover:text-white/70 transition-colors"
-                aria-label="Copy address"
+                className="text-white/30 hover:text-white/70"
               >
                 <Copy className="w-4 h-4" />
               </button>
             </div>
 
-            {serverMismatch && (
-              <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-4">
-                <div className="text-[11px] font-black text-orange-300 uppercase tracking-widest mb-2">
-                  Connected wallet differs from server login
-                </div>
-                <div className="text-xs text-white/50 font-bold break-all mb-2">
-                  Server wallet: {serverAddress}
-                </div>
-                <div className="text-xs text-white/40">
-                  Press Verify Wallet and the app will switch the login automatically.
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="glass rounded-2xl border border-white/10 p-4">
-                <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
-                  Snapshot Alloc
-                </div>
-                <div className="text-lg font-black text-white tabular-nums">
-                  {Number(totalMinedEcho).toFixed(2)}
-                </div>
-              </div>
-
-              <div className="glass rounded-2xl border border-white/10 p-4">
-                <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
-                  Airdrop Readiness
-                </div>
-                <div className="text-lg font-black text-white tabular-nums">
-                  {isVerified ? "100%" : "-"}
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() =>
-                window.open(explorerUrl(address), "_blank", "noopener,noreferrer")
-              }
-              className="w-full h-12 rounded-2xl glass border border-white/10 text-xs font-black uppercase tracking-widest text-white/70 hover:bg-white/5 flex items-center justify-center gap-2"
-            >
-              <ExternalLink className="w-4 h-4" />
-              View on Solscan
-            </button>
-
             <button
               onClick={handleVerifyWallet}
               disabled={isVerifying || isVerified}
-              className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:hover:bg-white flex items-center justify-center gap-2"
+              className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50"
             >
-              {isVerified ? (
-                <>
-                  <CheckCircle2 className="w-5 h-5" />
-                  Wallet Verified
-                </>
-              ) : isVerifying ? (
-                "Signing Message..."
-              ) : (
-                "Verify Wallet (Signature)"
-              )}
+              {isVerified
+                ? "Wallet Verified"
+                : isVerifying
+                ? "Signing Message..."
+                : "Verify Wallet (Signature)"}
             </button>
 
             {error && (
@@ -376,7 +324,7 @@ export default function WalletTab({
           </div>
         ) : (
           <div className="text-sm text-white/50 font-bold">
-            Connect a wallet to continue. We use a signature to link your account.
+            Connect a wallet to continue.
           </div>
         )}
       </div>
