@@ -121,7 +121,11 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     verifiedAt: api.wallet?.verifiedAt ?? null,
   };
 
-  const totalMinedEcho = Number(api.user?.totalMinedEcho ?? 0);
+  const totalMinedEcho = Number(
+    api.user?.totalMinedEcho ??
+    (api.user as any)?.totalMined ??
+    0
+  );
 
   const isActive = !!api.session?.isActive;
   const startedAtMs = api.session?.startedAt ? new Date(api.session.startedAt).getTime() : null;
