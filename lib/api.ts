@@ -1,5 +1,5 @@
 // lib/api.ts
-import { AppState, WalletState, NotificationPreferences } from "./types";
+import { AppState, NotificationPreferences, WalletState } from "./types";
 
 type ApiState = {
   ok: boolean;
@@ -29,6 +29,15 @@ function safeJsonParse<T>(s: string | null): T | null {
   if (!s) return null;
   try {
     return JSON.parse(s) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getConnectedWalletAddress(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return sessionStorage.getItem(CONNECTED_WALLET_KEY);
   } catch {
     return null;
   }
@@ -160,15 +169,6 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
   };
 }
 
-function getConnectedWalletAddress(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return sessionStorage.getItem(CONNECTED_WALLET_KEY);
-  } catch {
-    return null;
-  }
-}
-
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, {
     ...init,
@@ -177,7 +177,7 @@ async function fetchJson(url: string, init?: RequestInit) {
       ...(init?.headers ?? {}),
     },
     cache: "no-store",
-    credentials: "same-origin",
+    credentials: "include",
   });
 
   const text = await res.text();
@@ -205,16 +205,6 @@ export const EchoAPI = {
   STORAGE_KEY,
   CONNECTED_WALLET_KEY,
 
-  loadLocal(): AppState | null {
-    if (typeof window === "undefined") return null;
-    return safeJsonParse<AppState>(localStorage.getItem(STORAGE_KEY));
-  },
-
-  saveLocal(state: AppState) {
-    if (typeof window === "undefined") return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  },
-
   setConnectedWalletAddress(address: string | null) {
     if (typeof window === "undefined") return;
     try {
@@ -226,6 +216,16 @@ export const EchoAPI = {
     } catch {
       // ignore
     }
+  },
+
+  loadLocal(): AppState | null {
+    if (typeof window === "undefined") return null;
+    return safeJsonParse<AppState>(localStorage.getItem(STORAGE_KEY));
+  },
+
+  saveLocal(state: AppState) {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   },
 
   async getState(): Promise<AppState> {
@@ -244,13 +244,12 @@ export const EchoAPI = {
   async startSession(payload?: {
     baseRatePerHr?: number;
     multiplier?: number;
-    walletAddress?: string;
   }): Promise<AppState> {
     await fetchJson("/api/mining/start", {
       method: "POST",
       body: JSON.stringify({
         ...(payload ?? {}),
-        walletAddress: payload?.walletAddress ?? getConnectedWalletAddress(),
+        walletAddress: getConnectedWalletAddress(),
       }),
     });
 
