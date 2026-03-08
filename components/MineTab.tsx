@@ -22,7 +22,9 @@ const MineTab: React.FC<MineTabProps> = ({
   currentTime,
   onOpenBoosts
 }) => {
-  const currentTotal = Number(state.user.totalMined ?? 0) + (state.session.isActive ? sessionEarnings : 0);
+  const currentTotal =
+  Number(state.user.totalMined ?? 0) +
+  (state.session.isActive ? sessionEarnings : 0);
   const isActive = state.session.isActive;
   
   const timeLeft = state.session.endTime ? state.session.endTime - currentTime : 0;
