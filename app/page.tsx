@@ -70,6 +70,13 @@ export default function EchoMinerApp() {
   }, []);
 
   useEffect(() => {
+    if (!connectedWalletAddress || !serverWalletAddress) return;
+    if (connectedWalletAddress !== serverWalletAddress) {
+      setActiveTab(Tab.WALLET);
+    }
+  }, [connectedWalletAddress, serverWalletAddress]);
+
+  useEffect(() => {
     if (!state?.session?.isActive) return;
 
     const interval = setInterval(async () => {
@@ -194,13 +201,8 @@ export default function EchoMinerApp() {
                     // ignore
                   }
 
-                  try {
-                    const fresh = await EchoAPI.getState();
-                    setState(fresh);
-                  } catch {
-                    // ignore
-                  }
-
+                  const fresh = await EchoAPI.getState().catch(() => null);
+                  if (fresh) setState(fresh);
                   setActiveTab(Tab.WALLET);
                   return;
                 }
@@ -208,6 +210,13 @@ export default function EchoMinerApp() {
                 if (e?.status === 401) {
                   setActiveTab(Tab.WALLET);
                   return;
+                }
+
+                try {
+                  const fresh = await EchoAPI.getState();
+                  setState(fresh);
+                } catch {
+                  // ignore
                 }
 
                 console.error("start session failed:", e);
