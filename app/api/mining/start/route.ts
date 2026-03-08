@@ -5,6 +5,7 @@ import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
+import { settleMiningSession } from "@/lib/mining";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,14 +18,6 @@ type Body = {
 
 const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
 const DEFAULT_BASE_RATE_PER_HR = 1;
-
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
-function round6(n: number) {
-  return Math.round(n * 1_000_000) / 1_000_000;
-}
 
 export async function GET() {
   try {
@@ -70,7 +63,6 @@ export async function POST(req: Request) {
     }
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
-
     const sessionCheck = await requireMatchingWalletSession(requestedWalletAddress);
 
     if (isWalletSessionErr(sessionCheck)) {
@@ -93,129 +85,57 @@ export async function POST(req: Request) {
     const multiplier = body.multiplier == null ? 1 : Number(body.multiplier);
 
     if (!Number.isFinite(baseRatePerHr) || baseRatePerHr <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid baseRatePerHr" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Invalid baseRatePerHr" }, { status: 400 });
     }
 
     if (!Number.isFinite(multiplier) || multiplier <= 0) {
-      return NextResponse.json(
-        { ok: false, error: "Invalid multiplier" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "Invalid multiplier" }, { status: 400 });
     }
 
-    const now = new Date();
+    const settled = await settleMiningSession(authedUser.id);
 
-    const result = await prisma.$transaction(async (tx) => {
-      const existing = await tx.miningSession.findUnique({
-        where: { userId: authedUser.id },
-      });
+    if (settled.isActive && settled.startedAt) {
+      const endsAt = new Date(
+        settled.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000
+      );
 
-      if (existing?.isActive && existing.startedAt) {
-        const endsAt = new Date(existing.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
-
-        if (now.getTime() < endsAt.getTime()) {
-          return {
-            kind: "already_active" as const,
-            endsAt,
-          };
-        }
-
-        const lastAccruedAt = existing.lastAccruedAt ?? existing.startedAt;
-        const effectiveNow = endsAt;
-
-        const deltaSeconds = Math.floor(
-          (effectiveNow.getTime() - lastAccruedAt.getTime()) / 1000
-        );
-        const safeDeltaSeconds = clamp(deltaSeconds, 0, SESSION_DURATION_SECONDS);
-
-        const ratePerSec = (existing.baseRatePerHr * existing.multiplier) / 3600;
-        const earned = round6(Math.max(0, safeDeltaSeconds * ratePerSec));
-
-        const settledSession = await tx.miningSession.update({
-          where: { userId: authedUser.id },
-          data: {
-            sessionMined: { increment: earned },
-            lastAccruedAt: effectiveNow,
-            isActive: false,
-          },
-        });
-
-        await tx.user.update({
-          where: { id: authedUser.id },
-          data: { totalMinedEcho: { increment: earned } },
-        });
-
-        await tx.miningHistory.create({
-          data: {
-            userId: authedUser.id,
-            startedAt: existing.startedAt,
-            endedAt: endsAt,
-            baseRatePerHr: existing.baseRatePerHr,
-            multiplier: existing.multiplier,
-            totalMined: settledSession.sessionMined,
-          },
-        });
-
-        await tx.miningSession.update({
-          where: { userId: authedUser.id },
-          data: {
-            isActive: false,
-            startedAt: null,
-            lastAccruedAt: null,
-            sessionMined: 0,
-            baseRatePerHr: 0,
-            multiplier: 1,
-          },
-        });
-      }
-
-      const startedAt = now;
-      const endsAt = new Date(startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
-
-      await tx.miningSession.upsert({
-        where: { userId: authedUser.id },
-        update: {
-          isActive: true,
-          startedAt,
-          lastAccruedAt: startedAt,
-          baseRatePerHr,
-          multiplier,
-          sessionMined: 0,
-        },
-        create: {
-          userId: authedUser.id,
-          isActive: true,
-          startedAt,
-          lastAccruedAt: startedAt,
-          baseRatePerHr,
-          multiplier,
-          sessionMined: 0,
-        },
-      });
-
-      return {
-        kind: "started" as const,
-        endsAt,
-      };
-    });
-
-    if (result.kind === "already_active") {
       return NextResponse.json(
         {
           ok: false,
           error: "Session already active",
-          endsAt: result.endsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
         },
         { status: 409 }
       );
     }
 
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
+
+    await prisma.miningSession.upsert({
+      where: { userId: authedUser.id },
+      update: {
+        isActive: true,
+        startedAt: now,
+        lastAccruedAt: now,
+        baseRatePerHr,
+        multiplier,
+        sessionMined: 0,
+      },
+      create: {
+        userId: authedUser.id,
+        isActive: true,
+        startedAt: now,
+        lastAccruedAt: now,
+        baseRatePerHr,
+        multiplier,
+        sessionMined: 0,
+      },
+    });
+
     return NextResponse.json({
       ok: true,
-      endsAt: result.endsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
     });
   } catch (err) {
     console.error("mining/start error:", err);
