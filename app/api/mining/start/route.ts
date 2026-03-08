@@ -17,7 +17,7 @@ type Body = {
 };
 
 const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
-const DEFAULT_BASE_RATE_PER_HR = 1;
+const DEFAULT_BASE_RATE_PER_HR = 1 / 24;
 
 export async function GET() {
   try {
