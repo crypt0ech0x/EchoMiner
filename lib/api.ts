@@ -133,7 +133,12 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     ? new Date(api.session.lastAccruedAt).getTime()
     : null;
 
-  const baseRatePerHr = Number(api.session?.baseRatePerHr ?? 0);
+  const baseRatePerHr = Number(
+  api.session?.baseRatePerHr ??
+  (api.session as any)?.baseRate ??
+  0
+);
+
   const multiplier = Number(api.session?.multiplier ?? 1);
   const sessionMined = Number(api.session?.sessionMined ?? 0);
 
