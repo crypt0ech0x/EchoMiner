@@ -8,9 +8,8 @@ type Row = {
   verified: boolean;
   verifiedAt: string | null;
 
-  totalPurchasedEcho: number;
-  totalMinedEcho: number;
-  totalEcho: number;
+  previousTotal: number;
+  liveTotal: number;
 
   sessionActive: boolean;
   liveSessionMined: number;
@@ -24,9 +23,8 @@ type Row = {
 type Totals = {
   wallets: number;
   activeSessions: number;
-  totalMinedEcho: number;
-  totalPurchasedEcho: number;
-  totalEcho: number;
+  previousTotal: number;
+  liveTotal: number;
 };
 
 function fmtNum(n: number, digits = 4) {
@@ -54,9 +52,8 @@ export default function AdminDbPage() {
   const [totals, setTotals] = useState<Totals>({
     wallets: 0,
     activeSessions: 0,
-    totalMinedEcho: 0,
-    totalPurchasedEcho: 0,
-    totalEcho: 0,
+    previousTotal: 0,
+    liveTotal: 0,
   });
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -82,9 +79,8 @@ export default function AdminDbPage() {
         data.totals ?? {
           wallets: 0,
           activeSessions: 0,
-          totalMinedEcho: 0,
-          totalPurchasedEcho: 0,
-          totalEcho: 0,
+          previousTotal: 0,
+          liveTotal: 0,
         }
       );
       setGeneratedAt(data.generatedAt ?? null);
@@ -105,7 +101,7 @@ export default function AdminDbPage() {
     return [...rows].sort((a, b) => {
       if (a.sessionActive && !b.sessionActive) return -1;
       if (!a.sessionActive && b.sessionActive) return 1;
-      return b.totalEcho - a.totalEcho;
+      return b.liveTotal - a.liveTotal;
     });
   }, [rows]);
 
@@ -134,7 +130,7 @@ export default function AdminDbPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="text-xs uppercase tracking-widest text-white/40 font-black">
               Wallets
@@ -151,28 +147,19 @@ export default function AdminDbPage() {
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Total Mined
+              Previous Total
             </div>
             <div className="mt-2 text-2xl font-black">
-              {fmtNum(totals.totalMinedEcho)}
+              {fmtNum(totals.previousTotal)}
             </div>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
             <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Total Purchased
+              Live Total
             </div>
             <div className="mt-2 text-2xl font-black">
-              {fmtNum(totals.totalPurchasedEcho)}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Total Echo
-            </div>
-            <div className="mt-2 text-2xl font-black">
-              {fmtNum(totals.totalEcho)}
+              {fmtNum(totals.liveTotal)}
             </div>
           </div>
         </div>
@@ -187,10 +174,9 @@ export default function AdminDbPage() {
               <tr className="text-left text-white/50">
                 <th className="p-4 font-black">Wallet</th>
                 <th className="p-4 font-black">Verified</th>
-                <th className="p-4 font-black">Purchased</th>
-                <th className="p-4 font-black">Mined</th>
-                <th className="p-4 font-black">Total</th>
+                <th className="p-4 font-black">Previous Total</th>
                 <th className="p-4 font-black">Live Session</th>
+                <th className="p-4 font-black">Live Total</th>
                 <th className="p-4 font-black">Rate</th>
                 <th className="p-4 font-black">Started</th>
                 <th className="p-4 font-black">Ends</th>
@@ -219,9 +205,7 @@ export default function AdminDbPage() {
                     </span>
                   </td>
 
-                  <td className="p-4">{fmtNum(row.totalPurchasedEcho)}</td>
-                  <td className="p-4">{fmtNum(row.totalMinedEcho)}</td>
-                  <td className="p-4 font-bold">{fmtNum(row.totalEcho)}</td>
+                  <td className="p-4 font-bold">{fmtNum(row.previousTotal)}</td>
 
                   <td className="p-4">
                     {row.sessionActive ? (
@@ -235,6 +219,8 @@ export default function AdminDbPage() {
                       <span className="text-white/35">—</span>
                     )}
                   </td>
+
+                  <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
 
                   <td className="p-4">
                     {row.sessionActive ? (
@@ -256,7 +242,7 @@ export default function AdminDbPage() {
 
               {!sortedRows.length && !loading && (
                 <tr>
-                  <td className="p-6 text-white/40" colSpan={9}>
+                  <td className="p-6 text-white/40" colSpan={8}>
                     No wallets found.
                   </td>
                 </tr>
