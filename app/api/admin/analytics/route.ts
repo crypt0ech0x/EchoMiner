@@ -1,5 +1,4 @@
 // app/api/admin/analytics/route.ts
-
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { settleMiningSession, getSessionEndsAt } from "@/lib/mining";
@@ -11,16 +10,26 @@ function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status });
 }
 
-function startOfToday() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+function startOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function addDays(d: Date, days: number) {
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function dayKey(d: Date) {
+  return startOfDay(d).toISOString().slice(0, 10);
 }
 
 export async function GET() {
   try {
     const now = new Date();
-    const today = startOfToday();
+    const today = startOfDay(now);
 
     const wallets = await prisma.wallet.findMany({
       select: {
@@ -31,13 +40,11 @@ export async function GET() {
         createdAt: true,
         userId: true,
       },
+      orderBy: { createdAt: "desc" },
     });
 
-    const userIds = Array.from(
-      new Set(wallets.map((w) => w.userId).filter(Boolean))
-    ) as string[];
+    const userIds = Array.from(new Set(wallets.map((w) => w.userId).filter(Boolean))) as string[];
 
-    // settle sessions first
     for (const userId of userIds) {
       await settleMiningSession(userId, now);
     }
@@ -63,6 +70,20 @@ export async function GET() {
       },
     });
 
+    const histories = await prisma.miningHistory.findMany({
+      where: {
+        endedAt: {
+          gte: addDays(today, -13),
+        },
+      },
+      select: {
+        startedAt: true,
+        endedAt: true,
+        totalMined: true,
+      },
+      orderBy: { endedAt: "asc" },
+    });
+
     const userMap = new Map(users.map((u) => [u.id, u]));
     const sessionMap = new Map(sessions.map((s) => [s.userId, s]));
 
@@ -77,33 +98,26 @@ export async function GET() {
 
       const totalMinedEcho = Number(user?.totalMinedEcho ?? 0);
       const liveSession = active ? Number(session?.sessionMined ?? 0) : 0;
-
       const previousTotal = Math.max(0, totalMinedEcho - liveSession);
       const liveTotal = totalMinedEcho;
 
       const endingSoon =
         active &&
-        session?.startedAt &&
-        getSessionEndsAt(session.startedAt).getTime() - now.getTime() <
-          60 * 60 * 1000;
+        !!session?.startedAt &&
+        getSessionEndsAt(session.startedAt).getTime() - now.getTime() < 60 * 60 * 1000;
 
       return {
         wallet: wallet.address,
         verified: wallet.verified,
         createdAt: wallet.createdAt.toISOString(),
-
         previousTotal,
         liveSession,
         liveTotal,
-
         sessionActive: active,
         endingSoon,
-        baseRatePerHr: session?.baseRatePerHr ?? 0,
-        multiplier: session?.multiplier ?? 1,
-
-        startedAt: session?.startedAt
-          ? session.startedAt.toISOString()
-          : null,
+        baseRatePerHr: active ? Number(session?.baseRatePerHr ?? 0) : 0,
+        multiplier: active ? Number(session?.multiplier ?? 1) : 1,
+        startedAt: session?.startedAt ? session.startedAt.toISOString() : null,
       };
     });
 
@@ -121,49 +135,55 @@ export async function GET() {
 
     const sessionsEndingSoon = rows.filter((r) => r.endingSoon).length;
 
-    const topLive = [...rows]
-      .sort((a, b) => b.liveTotal - a.liveTotal)
-      .slice(0, 10);
+    const emissionsMap = new Map<string, number>();
+    for (let i = 13; i >= 0; i--) {
+      const d = addDays(today, -i);
+      emissionsMap.set(dayKey(d), 0);
+    }
 
-    const topPrevious = [...rows]
-      .sort((a, b) => b.previousTotal - a.previousTotal)
-      .slice(0, 10);
+    for (const h of histories) {
+      const key = dayKey(h.endedAt);
+      emissionsMap.set(key, (emissionsMap.get(key) ?? 0) + Number(h.totalMined ?? 0));
+    }
 
-    const topLiveSession = [...rows]
-      .sort((a, b) => b.liveSession - a.liveSession)
-      .slice(0, 10);
+    // include currently active session accrual in today’s bar
+    const todaysLiveEmission = rows.reduce((sum, r) => sum + r.liveSession, 0);
+    emissionsMap.set(dayKey(today), (emissionsMap.get(dayKey(today)) ?? 0) + todaysLiveEmission);
+
+    const dailyEmissions = Array.from(emissionsMap.entries()).map(([date, emitted]) => ({
+      date,
+      emitted: Number(emitted.toFixed(6)),
+    }));
+
+    const topLive = [...rows].sort((a, b) => b.liveTotal - a.liveTotal).slice(0, 10);
+    const topPrevious = [...rows].sort((a, b) => b.previousTotal - a.previousTotal).slice(0, 10);
+    const topLiveSession = [...rows].sort((a, b) => b.liveSession - a.liveSession).slice(0, 10);
 
     return json({
       ok: true,
       generatedAt: now.toISOString(),
-
       summary: {
         totalWallets,
         verifiedWallets,
         activeSessions,
-
         previousTotal,
         liveSessionTotal,
         liveTotal,
-
-        avgLivePerWallet:
-          totalWallets > 0 ? liveTotal / totalWallets : 0,
-
-        avgLivePerActive:
-          activeSessions > 0 ? liveTotal / activeSessions : 0,
+        avgLivePerWallet: totalWallets > 0 ? liveTotal / totalWallets : 0,
+        avgLivePerActive: activeSessions > 0 ? liveTotal / activeSessions : 0,
       },
-
       activity: {
         newWalletsToday,
         sessionsEndingSoon,
       },
-
+      charts: {
+        dailyEmissions,
+      },
       leaderboards: {
         byLiveTotal: topLive,
         byPreviousTotal: topPrevious,
         byLiveSession: topLiveSession,
       },
-
       rows,
     });
   } catch (err) {
