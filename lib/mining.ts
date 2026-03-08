@@ -1,7 +1,9 @@
 // lib/mining.ts
 import { prisma } from "@/lib/prisma";
 
-const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
+export const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
+export const STREAK_GRACE_SECONDS = 60 * 60 * 24; // 24 hours
+export const DEFAULT_BASE_RATE_PER_HR = 1 / 24; // 1 ECHO per day
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -13,6 +15,10 @@ function round6(n: number) {
 
 export function getSessionEndsAt(startedAt: Date) {
   return new Date(startedAt.getTime() + SESSION_DURATION_SECONDS * 1000);
+}
+
+export function getGraceEndsAt(endedAt: Date) {
+  return new Date(endedAt.getTime() + STREAK_GRACE_SECONDS * 1000);
 }
 
 export function calculateAccrual(args: {
@@ -39,6 +45,43 @@ export function calculateAccrual(args: {
     effectiveNow,
     endsAt,
     shouldEnd,
+  };
+}
+
+export async function getLatestCompletedSession(userId: string) {
+  return prisma.miningHistory.findFirst({
+    where: { userId },
+    orderBy: { endedAt: "desc" },
+    select: {
+      endedAt: true,
+      multiplier: true,
+    },
+  });
+}
+
+export async function getNextSessionPlan(userId: string, now = new Date()) {
+  const latest = await getLatestCompletedSession(userId);
+
+  if (!latest) {
+    return {
+      currentStreak: 0,
+      nextMultiplier: 1,
+      lastSessionEndAt: null as Date | null,
+      graceEndsAt: null as Date | null,
+      streakActive: false,
+    };
+  }
+
+  const graceEndsAt = getGraceEndsAt(latest.endedAt);
+  const streakActive = now.getTime() <= graceEndsAt.getTime();
+  const currentStreak = streakActive ? Number(latest.multiplier ?? 1) : 0;
+
+  return {
+    currentStreak,
+    nextMultiplier: streakActive ? currentStreak + 1 : 1,
+    lastSessionEndAt: latest.endedAt,
+    graceEndsAt,
+    streakActive,
   };
 }
 
