@@ -134,15 +134,13 @@ export default function WalletTab({
     } catch {}
   }
 
-  async function logoutOldServerSessionIfNeeded() {
-    if (!serverMismatch) return;
-
-    await clearLocalWalletState();
-
+  async function logoutServerSession() {
     await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
     }).catch(() => null);
+
+    await clearLocalWalletState();
 
     setIsVerified(false);
 
@@ -169,18 +167,21 @@ export default function WalletTab({
     try {
       setIsVerifying(true);
 
-      if (serverMismatch) {
-        await logoutOldServerSessionIfNeeded();
+      const currentAddress = publicKey.toBase58();
+
+      // 🔑 CRITICAL FIX: logout previous wallet session
+      if (serverAddress && serverAddress !== currentAddress) {
+        await logoutServerSession();
       }
 
-      EchoAPI.setConnectedWalletAddress(publicKey.toBase58());
+      EchoAPI.setConnectedWalletAddress(currentAddress);
 
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          walletAddress: publicKey.toBase58(),
+          walletAddress: currentAddress,
         }),
       });
 
@@ -193,9 +194,9 @@ export default function WalletTab({
 
       const message =
         "ECHO Wallet Verification\n" +
-        `Wallet: ${publicKey.toBase58()}\n` +
+        `Wallet: ${currentAddress}\n` +
         `Nonce: ${nonce}\n\n` +
-        "By signing this message, you verify ownership for ECHO eligibility.";
+        "By signing this message you verify ownership for ECHO eligibility.";
 
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
@@ -205,7 +206,7 @@ export default function WalletTab({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          publicKey: publicKey.toBase58(),
+          publicKey: currentAddress,
           nonce,
           message,
           signature: Array.from(signature),
@@ -218,7 +219,7 @@ export default function WalletTab({
       }
 
       try {
-        localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
+        localStorage.setItem(verifiedKey(currentAddress), "1");
       } catch {}
 
       setIsVerified(true);
@@ -227,7 +228,7 @@ export default function WalletTab({
         await onVerified();
       }
 
-      // CRITICAL: reload so server auth cookie is picked up
+      // reload to refresh auth state
       window.location.reload();
     } catch (e: any) {
       setError(e?.message || "Verification failed.");
