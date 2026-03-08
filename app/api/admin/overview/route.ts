@@ -25,27 +25,25 @@ export async function GET() {
 
     const now = new Date();
 
-    // Settle all users first so admin reflects canonical totals
-    const uniqueUserIds = Array.from(
+    const userIds = Array.from(
       new Set(wallets.map((w) => w.userId).filter(Boolean))
     ) as string[];
 
-    for (const userId of uniqueUserIds) {
+    // First settle all users so admin reflects canonical totals
+    for (const userId of userIds) {
       await settleMiningSession(userId, now);
     }
 
     const users = await prisma.user.findMany({
-      where: { id: { in: uniqueUserIds } },
+      where: { id: { in: userIds } },
       select: {
         id: true,
         totalMinedEcho: true,
       },
     });
 
-    const userMap = new Map(users.map((u) => [u.id, u]));
-
     const sessions = await prisma.miningSession.findMany({
-      where: { userId: { in: uniqueUserIds } },
+      where: { userId: { in: userIds } },
       select: {
         userId: true,
         isActive: true,
@@ -57,6 +55,7 @@ export async function GET() {
       },
     });
 
+    const userMap = new Map(users.map((u) => [u.id, u]));
     const sessionMap = new Map(sessions.map((s) => [s.userId, s]));
 
     const rows = wallets.map((wallet) => {
@@ -69,16 +68,18 @@ export async function GET() {
         now.getTime() < getSessionEndsAt(session.startedAt).getTime();
 
       const totalMinedEcho = Number(user?.totalMinedEcho ?? 0);
-      const totalPurchasedEcho = 0; // keep as-is until purchases are live
+      const totalPurchasedEcho = 0;
       const totalEcho = totalMinedEcho + totalPurchasedEcho;
 
       return {
         wallet: wallet.address,
         verified: wallet.verified,
         verifiedAt: wallet.verifiedAt ? wallet.verifiedAt.toISOString() : null,
+
         totalPurchasedEcho,
         totalMinedEcho,
         totalEcho,
+
         sessionActive: active,
         liveSessionMined: active ? Number(session?.sessionMined ?? 0) : 0,
         baseRatePerHr: active ? Number(session?.baseRatePerHr ?? 0) : 0,
@@ -86,6 +87,10 @@ export async function GET() {
         startedAt: active && session?.startedAt ? session.startedAt.toISOString() : null,
         lastAccruedAt:
           active && session?.lastAccruedAt ? session.lastAccruedAt.toISOString() : null,
+        endsAt:
+          active && session?.startedAt
+            ? getSessionEndsAt(session.startedAt).toISOString()
+            : null,
       };
     });
 
