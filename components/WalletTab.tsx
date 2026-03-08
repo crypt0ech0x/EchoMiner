@@ -1,3 +1,4 @@
+// components/WalletTab.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -26,6 +27,8 @@ type Props = {
   walletFromServer?: WalletFromServer;
   onVerified?: () => void | Promise<void>;
 };
+
+const APP_STATE_KEY = "echo_miner_state_v1";
 
 function verifiedKey(address: string) {
   return `echo:walletVerified:${address}`;
@@ -132,7 +135,7 @@ export default function WalletTab({
 
   async function clearLocalWalletState() {
     try {
-      localStorage.removeItem(EchoAPI.STORAGE_KEY);
+      localStorage.removeItem(APP_STATE_KEY);
     } catch {
       // ignore
     }
@@ -145,13 +148,16 @@ export default function WalletTab({
     }
   }
 
-  async function logoutServerSession() {
+  async function logoutOldServerSessionIfNeeded() {
+    if (!serverMismatch) return;
+
+    await clearLocalWalletState();
+
     await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
     }).catch(() => null);
 
-    await clearLocalWalletState();
     setIsVerified(false);
 
     if (onVerified) {
@@ -175,35 +181,32 @@ export default function WalletTab({
     try {
       setIsVerifying(true);
 
-      const currentAddress = publicKey.toBase58();
-
-      if (serverAddress && serverAddress !== currentAddress) {
-        await logoutServerSession();
+      if (serverMismatch) {
+        await logoutOldServerSessionIfNeeded();
       }
 
+      const currentAddress = publicKey.toBase58();
       EchoAPI.setConnectedWalletAddress(currentAddress);
 
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: currentAddress }),
         credentials: "include",
-        body: JSON.stringify({
-          walletAddress: currentAddress,
-        }),
       });
 
       if (!challengeRes.ok) {
         const data = await challengeRes.json().catch(() => null);
-        throw new Error(data?.error || "Could not start verification.");
+        throw new Error(data?.error || "Could not start verification. Try again.");
       }
 
-      const { nonce } = await challengeRes.json();
+      const { nonce } = (await challengeRes.json()) as { nonce: string };
 
       const message =
         "ECHO Wallet Verification\n" +
         `Wallet: ${currentAddress}\n` +
-        `Nonce: ${nonce}\n\n` +
-        "By signing this message you verify ownership for ECHO eligibility.";
+        `Nonce: ${nonce}\n` +
+        "\nBy signing this message, you verify ownership for ECHO eligibility.";
 
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
@@ -211,13 +214,13 @@ export default function WalletTab({
       const verifyRes = await fetch("/api/wallet/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
         body: JSON.stringify({
           publicKey: currentAddress,
           nonce,
           message,
           signature: Array.from(signature),
         }),
+        credentials: "include",
       });
 
       if (!verifyRes.ok) {
