@@ -6,25 +6,47 @@ import { useEffect, useMemo, useState } from "react";
 type Row = {
   wallet: string;
   verified: boolean;
-  verifiedAt: string | null;
+  createdAt: string;
 
   previousTotal: number;
+  liveSession: number;
   liveTotal: number;
 
   sessionActive: boolean;
-  liveSessionMined: number;
+  endingSoon: boolean;
   baseRatePerHr: number;
   multiplier: number;
   startedAt: string | null;
-  lastAccruedAt: string | null;
-  endsAt: string | null;
 };
 
-type Totals = {
-  wallets: number;
+type Summary = {
+  totalWallets: number;
+  verifiedWallets: number;
   activeSessions: number;
   previousTotal: number;
+  liveSessionTotal: number;
   liveTotal: number;
+  avgLivePerWallet: number;
+  avgLivePerActive: number;
+};
+
+type Activity = {
+  newWalletsToday: number;
+  sessionsEndingSoon: number;
+};
+
+type AnalyticsResponse = {
+  ok: boolean;
+  generatedAt: string;
+  summary: Summary;
+  activity: Activity;
+  leaderboards: {
+    byLiveTotal: Row[];
+    byPreviousTotal: Row[];
+    byLiveSession: Row[];
+  };
+  rows: Row[];
+  error?: string;
 };
 
 function fmtNum(n: number, digits = 4) {
@@ -47,15 +69,67 @@ function shortWallet(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
 }
 
+function KpiCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: string | number;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="text-xs uppercase tracking-widest text-white/40 font-black">
+        {title}
+      </div>
+      <div className="mt-2 text-2xl font-black text-white">{value}</div>
+    </div>
+  );
+}
+
+function Leaderboard({
+  title,
+  rows,
+  valueKey,
+}: {
+  title: string;
+  rows: Row[];
+  valueKey: "liveTotal" | "previousTotal" | "liveSession";
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="text-sm font-black text-white mb-4">{title}</div>
+
+      <div className="space-y-3">
+        {rows.length ? (
+          rows.map((row, idx) => (
+            <div
+              key={`${title}-${row.wallet}`}
+              className="flex items-center justify-between gap-3 rounded-xl bg-black/20 px-3 py-2"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="text-xs text-white/35 font-black w-5">
+                  {idx + 1}
+                </div>
+                <div className="font-mono text-sm text-white/80 truncate">
+                  {shortWallet(row.wallet)}
+                </div>
+              </div>
+
+              <div className="text-sm font-black text-white whitespace-nowrap">
+                {fmtNum(Number(row[valueKey] ?? 0))}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="text-sm text-white/40">No data.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDbPage() {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [totals, setTotals] = useState<Totals>({
-    wallets: 0,
-    activeSessions: 0,
-    previousTotal: 0,
-    liveTotal: 0,
-  });
-  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -65,27 +139,18 @@ export default function AdminDbPage() {
         method: "GET",
         credentials: "include",
         cache: "no-store",
-  });
+      });
 
-      const data = await res.json().catch(() => null);
+      const json = (await res.json().catch(() => null)) as AnalyticsResponse | null;
 
-      if (!res.ok || !data?.ok) {
-        throw new Error(data?.error || "Admin overview failed");
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Analytics failed");
       }
 
       setErr(null);
-      setRows(Array.isArray(data.rows) ? data.rows : []);
-      setTotals(
-        data.totals ?? {
-          wallets: 0,
-          activeSessions: 0,
-          previousTotal: 0,
-          liveTotal: 0,
-        }
-      );
-      setGeneratedAt(data.generatedAt ?? null);
+      setData(json);
     } catch (e: any) {
-      setErr(e?.message || "Admin overview failed");
+      setErr(e?.message || "Analytics failed");
     } finally {
       setLoading(false);
     }
@@ -98,21 +163,22 @@ export default function AdminDbPage() {
   }, []);
 
   const sortedRows = useMemo(() => {
+    const rows = data?.rows ?? [];
     return [...rows].sort((a, b) => {
       if (a.sessionActive && !b.sessionActive) return -1;
       if (!a.sessionActive && b.sessionActive) return 1;
       return b.liveTotal - a.liveTotal;
     });
-  }, [rows]);
+  }, [data?.rows]);
 
   return (
     <div className="min-h-screen bg-black text-white p-6">
       <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-black tracking-tight">Admin DB</h1>
+            <h1 className="text-2xl font-black tracking-tight">Admin Analytics</h1>
             <p className="text-sm text-white/50 mt-1">
-              Live wallet and mining overview
+              Canonical mining and wallet overview
             </p>
           </div>
 
@@ -130,126 +196,150 @@ export default function AdminDbPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Wallets
-            </div>
-            <div className="mt-2 text-2xl font-black">{totals.wallets}</div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Active Sessions
-            </div>
-            <div className="mt-2 text-2xl font-black">{totals.activeSessions}</div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Previous Total
-            </div>
-            <div className="mt-2 text-2xl font-black">
-              {fmtNum(totals.previousTotal)}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div className="text-xs uppercase tracking-widest text-white/40 font-black">
-              Live Total
-            </div>
-            <div className="mt-2 text-2xl font-black">
-              {fmtNum(totals.liveTotal)}
-            </div>
-          </div>
-        </div>
-
         <div className="text-xs text-white/35">
-          {loading ? "Loading..." : `Generated at: ${fmtDate(generatedAt)}`}
+          {loading
+            ? "Loading..."
+            : `Generated at: ${fmtDate(data?.generatedAt ?? null)}`}
         </div>
 
-        <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
-          <table className="w-full text-sm">
-            <thead className="bg-white/5">
-              <tr className="text-left text-white/50">
-                <th className="p-4 font-black">Wallet</th>
-                <th className="p-4 font-black">Verified</th>
-                <th className="p-4 font-black">Previous Total</th>
-                <th className="p-4 font-black">Live Session</th>
-                <th className="p-4 font-black">Live Total</th>
-                <th className="p-4 font-black">Rate</th>
-                <th className="p-4 font-black">Started</th>
-                <th className="p-4 font-black">Ends</th>
-              </tr>
-            </thead>
+        {data && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              <KpiCard title="Wallets" value={data.summary.totalWallets} />
+              <KpiCard title="Verified Wallets" value={data.summary.verifiedWallets} />
+              <KpiCard title="Active Sessions" value={data.summary.activeSessions} />
+              <KpiCard title="Previous Total" value={fmtNum(data.summary.previousTotal)} />
+              <KpiCard
+                title="Live Session Total"
+                value={fmtNum(data.summary.liveSessionTotal)}
+              />
+              <KpiCard title="Live Total" value={fmtNum(data.summary.liveTotal)} />
+              <KpiCard title="New Wallets Today" value={data.activity.newWalletsToday} />
+              <KpiCard
+                title="Sessions Ending Soon"
+                value={data.activity.sessionsEndingSoon}
+              />
+            </div>
 
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr
-                  key={row.wallet}
-                  className="border-t border-white/10 hover:bg-white/5"
-                >
-                  <td className="p-4 font-mono" title={row.wallet}>
-                    {shortWallet(row.wallet)}
-                  </td>
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <Leaderboard
+                title="Top Live Total"
+                rows={data.leaderboards.byLiveTotal}
+                valueKey="liveTotal"
+              />
+              <Leaderboard
+                title="Top Previous Total"
+                rows={data.leaderboards.byPreviousTotal}
+                valueKey="previousTotal"
+              />
+              <Leaderboard
+                title="Top Live Session"
+                rows={data.leaderboards.byLiveSession}
+                valueKey="liveSession"
+              />
+            </div>
 
-                  <td className="p-4">
-                    <span
-                      className={
-                        row.verified
-                          ? "text-emerald-300 font-bold"
-                          : "text-white/40 font-bold"
-                      }
+            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
+              <table className="w-full text-sm">
+                <thead className="bg-white/5">
+                  <tr className="text-left text-white/50">
+                    <th className="p-4 font-black">Wallet</th>
+                    <th className="p-4 font-black">Verified</th>
+                    <th className="p-4 font-black">Previous Total</th>
+                    <th className="p-4 font-black">Live Session</th>
+                    <th className="p-4 font-black">Live Total</th>
+                    <th className="p-4 font-black">Rate</th>
+                    <th className="p-4 font-black">Started</th>
+                    <th className="p-4 font-black">Status</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {sortedRows.map((row) => (
+                    <tr
+                      key={row.wallet}
+                      className="border-t border-white/10 hover:bg-white/5"
                     >
-                      {row.verified ? "Yes" : "No"}
-                    </span>
-                  </td>
+                      <td className="p-4 font-mono" title={row.wallet}>
+                        {shortWallet(row.wallet)}
+                      </td>
 
-                  <td className="p-4 font-bold">{fmtNum(row.previousTotal)}</td>
+                      <td className="p-4">
+                        <span
+                          className={
+                            row.verified
+                              ? "text-emerald-300 font-bold"
+                              : "text-white/40 font-bold"
+                          }
+                        >
+                          {row.verified ? "Yes" : "No"}
+                        </span>
+                      </td>
 
-                  <td className="p-4">
-                    {row.sessionActive ? (
-                      <div>
-                        <div className="text-emerald-300 font-bold">
-                          {fmtNum(row.liveSessionMined)}
-                        </div>
-                        <div className="text-xs text-white/35">Active</div>
-                      </div>
-                    ) : (
-                      <span className="text-white/35">—</span>
-                    )}
-                  </td>
+                      <td className="p-4 font-bold">
+                        {fmtNum(row.previousTotal)}
+                      </td>
 
-                  <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
+                      <td className="p-4">
+                        {row.sessionActive ? (
+                          <div>
+                            <div className="text-emerald-300 font-bold">
+                              {fmtNum(row.liveSession)}
+                            </div>
+                            <div className="text-xs text-white/35">Active</div>
+                          </div>
+                        ) : (
+                          <span className="text-white/35">—</span>
+                        )}
+                      </td>
 
-                  <td className="p-4">
-                    {row.sessionActive ? (
-                      <div>
-                        <div>{fmtNum(row.baseRatePerHr, 4)} E/H</div>
-                        <div className="text-xs text-white/35">
-                          x{fmtNum(row.multiplier, 2)}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-white/35">—</span>
-                    )}
-                  </td>
+                      <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
 
-                  <td className="p-4">{fmtDate(row.startedAt)}</td>
-                  <td className="p-4">{fmtDate(row.endsAt)}</td>
-                </tr>
-              ))}
+                      <td className="p-4">
+                        {row.sessionActive ? (
+                          <div>
+                            <div>{fmtNum(row.baseRatePerHr, 4)} E/H</div>
+                            <div className="text-xs text-white/35">
+                              x{fmtNum(row.multiplier, 2)}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-white/35">—</span>
+                        )}
+                      </td>
 
-              {!sortedRows.length && !loading && (
-                <tr>
-                  <td className="p-6 text-white/40" colSpan={8}>
-                    No wallets found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                      <td className="p-4">{fmtDate(row.startedAt)}</td>
+
+                      <td className="p-4">
+                        {row.sessionActive ? (
+                          <span
+                            className={
+                              row.endingSoon
+                                ? "text-yellow-300 font-bold"
+                                : "text-emerald-300 font-bold"
+                            }
+                          >
+                            {row.endingSoon ? "Ending Soon" : "Active"}
+                          </span>
+                        ) : (
+                          <span className="text-white/35">Inactive</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+
+                  {!sortedRows.length && !loading && (
+                    <tr>
+                      <td className="p-6 text-white/40" colSpan={8}>
+                        No wallets found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
