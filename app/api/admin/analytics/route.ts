@@ -26,10 +26,19 @@ function dayKey(d: Date) {
   return startOfDay(d).toISOString().slice(0, 10);
 }
 
-export async function GET() {
+function parseRange(searchParams: URLSearchParams) {
+  const raw = Number(searchParams.get("days") ?? 14);
+  const days = Number.isFinite(raw) ? Math.max(7, Math.min(90, Math.floor(raw))) : 14;
+  return days;
+}
+
+export async function GET(req: Request) {
   try {
     const now = new Date();
+    const url = new URL(req.url);
+    const days = parseRange(url.searchParams);
     const today = startOfDay(now);
+    const rangeStart = addDays(today, -(days - 1));
 
     const wallets = await prisma.wallet.findMany({
       select: {
@@ -73,11 +82,10 @@ export async function GET() {
     const histories = await prisma.miningHistory.findMany({
       where: {
         endedAt: {
-          gte: addDays(today, -13),
+          gte: rangeStart,
         },
       },
       select: {
-        startedAt: true,
         endedAt: true,
         totalMined: true,
       },
@@ -117,6 +125,7 @@ export async function GET() {
         endingSoon,
         baseRatePerHr: active ? Number(session?.baseRatePerHr ?? 0) : 0,
         multiplier: active ? Number(session?.multiplier ?? 1) : 1,
+        liveMultiplier: active ? Number(session?.multiplier ?? 1) : 0,
         startedAt: session?.startedAt ? session.startedAt.toISOString() : null,
       };
     });
@@ -136,24 +145,30 @@ export async function GET() {
     const sessionsEndingSoon = rows.filter((r) => r.endingSoon).length;
 
     const emissionsMap = new Map<string, number>();
-    for (let i = 13; i >= 0; i--) {
+    for (let i = days - 1; i >= 0; i--) {
       const d = addDays(today, -i);
       emissionsMap.set(dayKey(d), 0);
     }
 
     for (const h of histories) {
       const key = dayKey(h.endedAt);
-      emissionsMap.set(key, (emissionsMap.get(key) ?? 0) + Number(h.totalMined ?? 0));
+      if (emissionsMap.has(key)) {
+        emissionsMap.set(key, (emissionsMap.get(key) ?? 0) + Number(h.totalMined ?? 0));
+      }
     }
 
-    // include currently active session accrual in today’s bar
     const todaysLiveEmission = rows.reduce((sum, r) => sum + r.liveSession, 0);
     emissionsMap.set(dayKey(today), (emissionsMap.get(dayKey(today)) ?? 0) + todaysLiveEmission);
 
-    const dailyEmissions = Array.from(emissionsMap.entries()).map(([date, emitted]) => ({
-      date,
-      emitted: Number(emitted.toFixed(6)),
-    }));
+    let running = 0;
+    const dailyEmissions = Array.from(emissionsMap.entries()).map(([date, emitted]) => {
+      running += emitted;
+      return {
+        date,
+        emitted: Number(emitted.toFixed(6)),
+        cumulative: Number(running.toFixed(6)),
+      };
+    });
 
     const topLive = [...rows].sort((a, b) => b.liveTotal - a.liveTotal).slice(0, 10);
     const topPrevious = [...rows].sort((a, b) => b.previousTotal - a.previousTotal).slice(0, 10);
@@ -162,6 +177,11 @@ export async function GET() {
     return json({
       ok: true,
       generatedAt: now.toISOString(),
+      range: {
+        days,
+        startDate: rangeStart.toISOString(),
+        endDate: now.toISOString(),
+      },
       summary: {
         totalWallets,
         verifiedWallets,
