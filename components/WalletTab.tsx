@@ -67,16 +67,30 @@ export default function WalletTab({
       return;
     }
 
+    // If connected wallet differs from server-authenticated wallet,
+    // it must NOT be treated as verified.
+    if (serverMismatch) {
+      setIsVerified(false);
+      return;
+    }
+
     if (serverVerified && serverAddress === address) {
       setIsVerified(true);
       return;
     }
 
     setIsVerified(false);
-  }, [connected, address, serverVerified, serverAddress]);
+  }, [connected, address, serverVerified, serverAddress, serverMismatch]);
 
   useEffect(() => {
     if (!connected || !address) return;
+
+    // Never use local cached verification when server wallet mismatches.
+    if (serverMismatch) {
+      setIsVerified(false);
+      return;
+    }
+
     if (serverVerified && serverAddress === address) return;
 
     try {
@@ -85,7 +99,7 @@ export default function WalletTab({
     } catch {
       // ignore
     }
-  }, [connected, address, serverVerified, serverAddress]);
+  }, [connected, address, serverVerified, serverAddress, serverMismatch]);
 
   useEffect(() => {
     if (!connected) {
@@ -357,16 +371,18 @@ export default function WalletTab({
 
             <button
               onClick={handleVerifyWallet}
-              disabled={isVerifying || isVerified}
+              disabled={isVerifying || (isVerified && !serverMismatch)}
               className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:hover:bg-white flex items-center justify-center gap-2"
             >
-              {isVerified ? (
+              {isVerified && !serverMismatch ? (
                 <>
                   <CheckCircle2 className="w-5 h-5" />
                   Wallet Verified
                 </>
               ) : isVerifying ? (
                 "Signing Message..."
+              ) : serverMismatch ? (
+                "Switch Login To This Wallet"
               ) : (
                 "Verify Wallet (Signature)"
               )}
