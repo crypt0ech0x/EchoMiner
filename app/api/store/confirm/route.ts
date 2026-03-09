@@ -108,7 +108,7 @@ export async function POST(req: Request) {
     }
 
     const verification = await verifySolTransfer({
-      txSignature,
+      signature: txSignature,
       expectedSender: sessionCheck.walletAddress,
       expectedRecipient: getTreasuryWalletAddress(),
       expectedLamports: solToLamports(pkg.solAmount),
