@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { settleMiningSession, getSessionEndsAt } from "@/lib/mining";
+import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,11 @@ function parseRange(searchParams: URLSearchParams) {
 
 export async function GET(req: Request) {
   try {
+    const adminOk = await requireAdminRequest();
+    if (!adminOk) {
+      return json({ ok: false, error: "Unauthorized" }, 401);
+    }
+
     const now = new Date();
     const url = new URL(req.url);
     const days = parseRange(url.searchParams);
