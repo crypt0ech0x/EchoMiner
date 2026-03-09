@@ -5,11 +5,8 @@ import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
-import {
-  getTreasuryWalletAddress,
-  solToLamports,
-} from "@/lib/solana-payments";
 import { getStorePackage } from "@/lib/store-packages";
+import { getTreasuryWalletAddress, solToLamports } from "@/lib/solana-payments";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +18,13 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Body;
+    let body: Body = {};
+    try {
+      body = (await req.json()) as Body;
+    } catch {
+      body = {};
+    }
+
     const packageId = String(body.packageId ?? "").trim();
     const requestedWalletAddress = String(body.walletAddress ?? "").trim();
 
@@ -49,7 +52,7 @@ export async function POST(req: Request) {
     const pkg = getStorePackage(packageId);
     if (!pkg) {
       return NextResponse.json(
-        { ok: false, error: "Invalid package" },
+        { ok: false, error: "Invalid packageId" },
         { status: 400 }
       );
     }
@@ -65,26 +68,19 @@ export async function POST(req: Request) {
       },
       select: {
         id: true,
-        userId: true,
-        walletAddress: true,
-        packageId: true,
-        solAmount: true,
-        echoAmount: true,
-        status: true,
       },
     });
 
     return NextResponse.json({
       ok: true,
       purchaseId: purchase.id,
-      package: {
-        id: pkg.id,
-        name: pkg.name,
-        solAmount: pkg.solAmount,
-        echoAmount: pkg.echoAmount,
-      },
-      treasuryWallet: getTreasuryWalletAddress(),
+      packageId: pkg.id,
+      name: pkg.name,
+      solAmount: pkg.solAmount,
+      echoAmount: pkg.echoAmount,
       lamports: solToLamports(pkg.solAmount),
+      treasuryWallet: getTreasuryWalletAddress(),
+      walletAddress: sessionCheck.walletAddress,
     });
   } catch (err) {
     console.error("store/create-intent error:", err);
