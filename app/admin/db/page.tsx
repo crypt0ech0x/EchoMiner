@@ -414,14 +414,14 @@ export default function AdminDbPage() {
                         <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
 
                         <td className="p-4">
-                          {row.sessionActive ? (
-                            <div>
-                              <div>{fmtNum(row.baseRatePerHr, 4)} E/H</div>
-                            </div>
-                          ) : (
-                            <span className="text-white/35">—</span>
-                          )}
-                        </td>
+                           {row.sessionActive ? (
+                             <div>
+                               <div>{fmtNum(row.baseRatePerHr * row.multiplier, 4)} E/H</div>
+                             </div>
+                           ) : (
+                             <span className="text-white/35">—</span>
+                           )}
+                          </td>
 
                         <td className="p-4">
                           {row.sessionActive ? (
