@@ -5,19 +5,19 @@ import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
-import { settleMiningSession } from "@/lib/mining";
+import {
+  settleMiningSession,
+  getNextSessionPlan,
+  DEFAULT_BASE_RATE_PER_HR,
+  SESSION_DURATION_SECONDS,
+} from "@/lib/mining";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
-  baseRatePerHr?: number;
-  multiplier?: number;
   walletAddress?: string;
 };
-
-const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
-const DEFAULT_BASE_RATE_PER_HR = 1 / 24;
 
 export async function GET() {
   try {
@@ -79,19 +79,6 @@ export async function POST(req: Request) {
 
     const authedUser = sessionCheck.user;
 
-    const baseRatePerHr =
-      body.baseRatePerHr == null ? DEFAULT_BASE_RATE_PER_HR : Number(body.baseRatePerHr);
-
-    const multiplier = body.multiplier == null ? 1 : Number(body.multiplier);
-
-    if (!Number.isFinite(baseRatePerHr) || baseRatePerHr <= 0) {
-      return NextResponse.json({ ok: false, error: "Invalid baseRatePerHr" }, { status: 400 });
-    }
-
-    if (!Number.isFinite(multiplier) || multiplier <= 0) {
-      return NextResponse.json({ ok: false, error: "Invalid multiplier" }, { status: 400 });
-    }
-
     const settled = await settleMiningSession(authedUser.id);
 
     if (settled.isActive && settled.startedAt) {
@@ -111,6 +98,10 @@ export async function POST(req: Request) {
 
     const now = new Date();
     const endsAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
+    const streakPlan = await getNextSessionPlan(authedUser.id, now);
+
+    const baseRatePerHr = DEFAULT_BASE_RATE_PER_HR;
+    const multiplier = streakPlan.nextMultiplier;
 
     await prisma.miningSession.upsert({
       where: { userId: authedUser.id },
@@ -136,6 +127,12 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       endsAt: endsAt.toISOString(),
+      baseRatePerHr,
+      multiplier,
+      streak: {
+        currentStreak: multiplier,
+        graceEndsAt: streakPlan.graceEndsAt ? streakPlan.graceEndsAt.toISOString() : null,
+      },
     });
   } catch (err) {
     console.error("mining/start error:", err);
