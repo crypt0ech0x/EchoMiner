@@ -19,6 +19,7 @@ function shapeResponse(args: {
     verifiedAt: Date | null;
   } | null;
   totalMinedEcho: number;
+  totalPurchasedEcho: number;
   session: {
     isActive: boolean;
     startedAt: Date | null;
@@ -45,6 +46,7 @@ function shapeResponse(args: {
     },
     user: {
       totalMinedEcho: Number(args.totalMinedEcho ?? 0),
+      totalPurchasedEcho: Number(args.totalPurchasedEcho ?? 0),
     },
     session: {
       isActive: args.session?.isActive ?? false,
@@ -78,6 +80,7 @@ async function getState() {
       authed: false,
       wallet: null,
       totalMinedEcho: 0,
+      totalPurchasedEcho: 0,
       session: null,
       streak: {
         currentStreak: 0,
@@ -90,6 +93,13 @@ async function getState() {
 
   const settled = await settleMiningSession(authedUser.id);
 
+  const user = await prisma.user.findUnique({
+    where: { id: authedUser.id },
+    select: {
+      totalPurchasedEcho: true,
+    },
+  });
+
   const wallet = await prisma.wallet.findFirst({
     where: { userId: authedUser.id },
     select: {
@@ -99,9 +109,6 @@ async function getState() {
     },
   });
 
-  // IMPORTANT:
-  // If a session is currently active, the visible streak on the Mine tab
-  // should reflect that active session's multiplier/day count.
   let streak;
   if (settled.isActive) {
     const activeStreak = Number(settled.multiplier ?? 1);
@@ -125,6 +132,7 @@ async function getState() {
     authed: true,
     wallet,
     totalMinedEcho: settled.totalMinedEcho,
+    totalPurchasedEcho: Number(user?.totalPurchasedEcho ?? 0),
     session: {
       isActive: settled.isActive,
       startedAt: settled.startedAt,
