@@ -9,20 +9,22 @@ generator client {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id                 String         @id @default(cuid())
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
-  email         String?        @unique
-  totalMinedEcho Float         @default(0)
+  email              String?        @unique
+  totalMinedEcho     Float          @default(0)
+  totalPurchasedEcho Float          @default(0)
 
-  wallet        Wallet?
-  miningSession MiningSession?
-  miningHistory MiningHistory[]
-  sessions      Session[]
-  purchases     Purchase[]
+  wallet             Wallet?
+  miningSession      MiningSession?
+  miningHistory      MiningHistory[]
+  sessions           Session[]
+  purchases          Purchase[]
 
   @@index([totalMinedEcho])
+  @@index([totalPurchasedEcho])
 }
 
 model Wallet {
@@ -39,8 +41,8 @@ model Wallet {
 }
 
 model WalletNonce {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
 
   walletAddress String
   nonce         String
@@ -50,34 +52,34 @@ model WalletNonce {
 }
 
 model MiningSession {
-  id           String   @id @default(cuid())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  userId       String   @unique
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  isActive     Boolean  @default(false)
-  startedAt    DateTime?
+  isActive      Boolean  @default(false)
+  startedAt     DateTime?
   lastAccruedAt DateTime?
 
-  baseRatePerHr Float   @default(0)
-  multiplier    Float   @default(1)
+  baseRatePerHr Float    @default(0)
+  multiplier    Float    @default(1)
 
-  sessionMined  Float   @default(0)
+  sessionMined  Float    @default(0)
 
   @@index([isActive])
 }
 
 model MiningHistory {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
 
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  startedAt DateTime
-  endedAt   DateTime
+  startedAt     DateTime
+  endedAt       DateTime
 
   baseRatePerHr Float
   multiplier    Float
@@ -102,19 +104,22 @@ model Session {
 }
 
 model Purchase {
-  id          String   @id @default(cuid())
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  confirmedAt   DateTime?
 
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // provider idempotency key (Stripe session id, etc)
-  provider    String
-  providerRef String   @unique
-
-  // amount of ECHO purchased / credited
-  amountEcho  Float
+  walletAddress String
+  packageId     String
+  solAmount     Float
+  echoAmount    Float
+  txSignature   String?  @unique
+  status        String   @default("pending")
 
   @@index([userId])
+  @@index([walletAddress])
+  @@index([status])
   @@index([createdAt])
 }
