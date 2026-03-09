@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { settleMiningSession, getSessionEndsAt } from "@/lib/mining";
+import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,11 @@ function csvEscape(value: string | number | boolean | null) {
 
 export async function GET() {
   try {
+    const adminOk = await requireAdminRequest();
+    if (!adminOk) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
     const now = new Date();
 
     const wallets = await prisma.wallet.findMany({
