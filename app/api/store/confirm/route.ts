@@ -5,9 +5,9 @@ import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
-import { getStorePackageById } from "@/lib/store-packages";
+import { getStorePackage } from "@/lib/store-packages";
 import {
-  getTreasuryWallet,
+  getTreasuryWalletAddress,
   solToLamports,
   verifySolTransfer,
 } from "@/lib/solana-payments";
@@ -99,7 +99,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const pkg = getStorePackageById(purchase.packageId);
+    const pkg = getStorePackage(purchase.packageId);
     if (!pkg) {
       return NextResponse.json(
         { ok: false, error: "Purchase package config missing" },
@@ -110,7 +110,7 @@ export async function POST(req: Request) {
     const verification = await verifySolTransfer({
       txSignature,
       expectedSender: sessionCheck.walletAddress,
-      expectedRecipient: getTreasuryWallet().toBase58(),
+      expectedRecipient: getTreasuryWalletAddress(),
       expectedLamports: solToLamports(pkg.solAmount),
     });
 
