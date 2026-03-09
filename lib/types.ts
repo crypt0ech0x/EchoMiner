@@ -57,9 +57,10 @@ export interface UserStats {
 
 export interface StreakInfo {
   currentStreak: number;
-  lastSessionStartAt: number | null; // ms
-  lastSessionEndAt: number | null;   // ms
-  graceEndsAt: number | null;        // ms
+  lastSessionStartAt: number | null;
+  lastSessionEndAt: number | null;
+  graceEndsAt: number | null;
+  nextMultiplier?: number;
 }
 
 export interface WalletState {
