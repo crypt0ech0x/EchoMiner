@@ -95,6 +95,7 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
+  // Full session live number for the center mining display
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -106,6 +107,22 @@ export default function EchoMinerApp() {
 
     const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
     return base + deltaSec * effectiveRatePerSec;
+  }, [state, now, effectiveRatePerSec]);
+
+  // Correct top balance card total:
+  // settled total already includes session accrual up to lastAccruedAt,
+  // so only add the tiny unsmoothed delta since lastAccruedAt.
+  const balanceCardTotal = useMemo(() => {
+    const settledTotal = Number(state?.user?.totalMined ?? 0);
+
+    if (!state?.session?.isActive) return settledTotal;
+
+    const lastAccruedAt = state.session.lastAccruedAt ?? null;
+    if (!lastAccruedAt) return settledTotal;
+    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) return settledTotal;
+
+    const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
+    return settledTotal + deltaSec * effectiveRatePerSec;
   }, [state, now, effectiveRatePerSec]);
 
   const totalMultiplier = useMemo(() => {
@@ -171,6 +188,7 @@ export default function EchoMinerApp() {
           <MineTab
             state={state}
             sessionEarnings={sessionEarnings}
+            balanceCardTotal={balanceCardTotal}
             effectiveRate={effectiveRatePerSec}
             totalMultiplier={totalMultiplier}
             currentTime={now}
