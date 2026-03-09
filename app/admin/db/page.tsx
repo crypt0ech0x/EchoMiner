@@ -234,6 +234,11 @@ export default function AdminDbPage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(14);
+  const [unauthorized, setUnauthorized] = useState(false);
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
 
   async function load(selectedDays = days) {
     try {
@@ -245,10 +250,18 @@ export default function AdminDbPage() {
 
       const json = (await res.json().catch(() => null)) as AnalyticsResponse | null;
 
+      if (res.status === 401) {
+        setUnauthorized(true);
+        setData(null);
+        setErr(null);
+        return;
+      }
+
       if (!res.ok || !json?.ok) {
         throw new Error(json?.error || "Analytics failed");
       }
 
+      setUnauthorized(false);
       setErr(null);
       setData(json);
     } catch (e: any) {
@@ -258,11 +271,60 @@ export default function AdminDbPage() {
     }
   }
 
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      setLoginBusy(true);
+      setErr(null);
+
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          password,
+        }),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error || "Login failed");
+      }
+
+      setPassword("");
+      setUnauthorized(false);
+      await load(days);
+    } catch (e: any) {
+      setErr(e?.message || "Login failed");
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await fetch("/api/admin/logout", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore
+    }
+    setData(null);
+    setUnauthorized(true);
+  }
+
   useEffect(() => {
     load(days);
-    const id = setInterval(() => load(days), 5000);
+    const id = setInterval(() => {
+      if (!unauthorized) load(days);
+    }, 5000);
     return () => clearInterval(id);
-  }, [days]);
+  }, [days, unauthorized]);
 
   const sortedRows = useMemo(() => {
     const rows = data?.rows ?? [];
@@ -272,6 +334,60 @@ export default function AdminDbPage() {
       return b.liveTotal - a.liveTotal;
     });
   }, [data?.rows]);
+
+  if (unauthorized) {
+    return (
+      <div className="min-h-screen bg-[#05070b] text-white flex items-center justify-center px-6">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/[0.04] backdrop-blur-xl p-6">
+          <h1 className="text-2xl font-black tracking-tight">Admin Login</h1>
+          <p className="text-sm text-white/45 mt-2">
+            Sign in with ADMIN_USER and ADMIN_PASS
+          </p>
+
+          {err && (
+            <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 p-3 text-red-200 text-sm">
+              {err}
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} className="mt-6 space-y-4">
+            <div>
+              <label className="block text-xs text-white/45 mb-2 uppercase tracking-widest">
+                Username
+              </label>
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full rounded-2xl bg-black/30 border border-white/10 px-4 py-3 text-white outline-none"
+                autoComplete="username"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-white/45 mb-2 uppercase tracking-widest">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-2xl bg-black/30 border border-white/10 px-4 py-3 text-white outline-none"
+                autoComplete="current-password"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loginBusy}
+              className="w-full rounded-2xl bg-white text-black font-black py-3"
+            >
+              {loginBusy ? "Signing In..." : "Sign In"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#05070b] text-white">
@@ -312,6 +428,13 @@ export default function AdminDbPage() {
               className="px-4 py-2 rounded-2xl border border-white/15 bg-white/[0.05] text-white font-bold"
             >
               Refresh
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="px-4 py-2 rounded-2xl border border-red-500/20 bg-red-500/10 text-red-200 font-bold"
+            >
+              Logout
             </button>
           </div>
         </div>
@@ -414,14 +537,17 @@ export default function AdminDbPage() {
                         <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
 
                         <td className="p-4">
-                           {row.sessionActive ? (
-                             <div>
-                               <div>{fmtNum(row.baseRatePerHr * row.multiplier, 4)} E/H</div>
-                             </div>
-                           ) : (
-                             <span className="text-white/35">—</span>
-                           )}
-                          </td>
+                          {row.sessionActive ? (
+                            <div>
+                              <div>{fmtNum(row.baseRatePerHr * row.multiplier, 4)} E/H</div>
+                              <div className="text-xs text-white/35">
+                                base {fmtNum(row.baseRatePerHr, 4)} × {fmtNum(row.multiplier, 2)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-white/35">—</span>
+                          )}
+                        </td>
 
                         <td className="p-4">
                           {row.sessionActive ? (
