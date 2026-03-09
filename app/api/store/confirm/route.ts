@@ -5,12 +5,12 @@ import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
+import { getStorePackageById } from "@/lib/store-packages";
 import {
-  getTreasuryWalletAddress,
+  getTreasuryWallet,
   solToLamports,
   verifySolTransfer,
 } from "@/lib/solana-payments";
-import { getStorePackage } from "@/lib/store-packages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,12 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json().catch(() => ({}))) as Body;
+    let body: Body = {};
+    try {
+      body = (await req.json()) as Body;
+    } catch {
+      body = {};
+    }
 
     const purchaseId = String(body.purchaseId ?? "").trim();
     const txSignature = String(body.txSignature ?? "").trim();
@@ -52,16 +57,6 @@ export async function POST(req: Request) {
 
     const purchase = await prisma.purchase.findUnique({
       where: { id: purchaseId },
-      select: {
-        id: true,
-        userId: true,
-        walletAddress: true,
-        packageId: true,
-        solAmount: true,
-        echoAmount: true,
-        txSignature: true,
-        status: true,
-      },
     });
 
     if (!purchase) {
@@ -78,56 +73,55 @@ export async function POST(req: Request) {
       );
     }
 
-    if (purchase.walletAddress !== sessionCheck.walletAddress) {
+    if (purchase.status === "confirmed") {
+      return NextResponse.json({ ok: true, alreadyConfirmed: true });
+    }
+
+    if (purchase.txSignature && purchase.txSignature !== txSignature) {
       return NextResponse.json(
-        { ok: false, error: "Purchase wallet mismatch" },
+        { ok: false, error: "Purchase already tied to another signature" },
         { status: 409 }
       );
     }
 
-    if (purchase.status === "confirmed") {
-      return NextResponse.json({
-        ok: true,
-        alreadyConfirmed: true,
-      });
-    }
-
-    const usedSignature = await prisma.purchase.findFirst({
+    const existingSignature = await prisma.purchase.findFirst({
       where: {
         txSignature,
-        id: { not: purchase.id },
+        NOT: { id: purchase.id },
       },
       select: { id: true },
     });
 
-    if (usedSignature) {
+    if (existingSignature) {
       return NextResponse.json(
         { ok: false, error: "Transaction signature already used" },
         { status: 409 }
       );
     }
 
-    const pkg = getStorePackage(purchase.packageId);
+    const pkg = getStorePackageById(purchase.packageId);
     if (!pkg) {
       return NextResponse.json(
-        { ok: false, error: "Package config missing" },
+        { ok: false, error: "Purchase package config missing" },
         { status: 500 }
       );
     }
 
     const verification = await verifySolTransfer({
-      signature: txSignature,
+      txSignature,
       expectedSender: sessionCheck.walletAddress,
-      expectedRecipient: getTreasuryWalletAddress(),
+      expectedRecipient: getTreasuryWallet().toBase58(),
       expectedLamports: solToLamports(pkg.solAmount),
     });
 
-    if (!verification.ok) {
+    if ("error" in verification) {
       return NextResponse.json(
         { ok: false, error: verification.error },
         { status: 400 }
       );
     }
+
+    const now = new Date();
 
     await prisma.$transaction(async (tx) => {
       await tx.purchase.update({
@@ -135,30 +129,25 @@ export async function POST(req: Request) {
         data: {
           txSignature,
           status: "confirmed",
-          confirmedAt: new Date(),
+          confirmedAt: now,
         },
       });
 
       await tx.user.update({
-        where: { id: sessionCheck.user.id },
+        where: { id: purchase.userId },
         data: {
-          totalPurchasedEcho: {
-            increment: pkg.echoAmount,
-          },
+          totalPurchasedEcho: { increment: purchase.echoAmount },
         },
       });
     });
 
     return NextResponse.json({
       ok: true,
-      confirmed: true,
-      package: {
-        id: pkg.id,
-        name: pkg.name,
-        echoAmount: pkg.echoAmount,
-        solAmount: pkg.solAmount,
-      },
+      confirmedAt: now.toISOString(),
+      echoAmount: purchase.echoAmount,
+      solAmount: purchase.solAmount,
       txSignature,
+      slot: verification.slot,
     });
   } catch (err) {
     console.error("store/confirm error:", err);
