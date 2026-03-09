@@ -12,6 +12,7 @@ type ApiState = {
   user: {
     totalMinedEcho?: number;
     totalMined?: number;
+    totalPurchasedEcho?: number;
   };
   session: {
     isActive: boolean;
@@ -64,6 +65,7 @@ function defaultAppState(): AppState {
       username: "Voyager",
       balance: 0,
       totalMined: 0,
+      totalPurchased: 0,
       referrals: 0,
       joinedDate: now,
       guest: true,
@@ -137,6 +139,8 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
       0
   );
 
+  const totalPurchasedEcho = Number(api.user?.totalPurchasedEcho ?? 0);
+
   const isActive = !!api.session?.isActive;
   const startedAtMs = api.session?.startedAt
     ? new Date(api.session.startedAt).getTime()
@@ -179,7 +183,8 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     user: {
       ...base.user,
       totalMined: totalMinedEcho,
-      balance: totalMinedEcho,
+      totalPurchased: totalPurchasedEcho,
+      balance: totalMinedEcho + totalPurchasedEcho,
       guest: !api.authed,
     },
 
@@ -295,6 +300,29 @@ export const EchoAPI = {
     return await this.getState();
   },
 
+  async createStoreIntent(packageId: string) {
+    return await fetchJson("/api/store/create-intent", {
+      method: "POST",
+      body: JSON.stringify({
+        packageId,
+        walletAddress: getConnectedWalletAddress(),
+      }),
+    });
+  },
+
+  async confirmStorePurchase(purchaseId: string, txSignature: string): Promise<AppState> {
+    await fetchJson("/api/store/confirm", {
+      method: "POST",
+      body: JSON.stringify({
+        purchaseId,
+        txSignature,
+        walletAddress: getConnectedWalletAddress(),
+      }),
+    });
+
+    return await this.getState();
+  },
+
   async activateAdBoost(): Promise<AppState> {
     try {
       await fetchJson("/api/boost/activate", { method: "POST" });
@@ -356,26 +384,6 @@ export const EchoAPI = {
       await fetchJson("/api/notifications/preferences", {
         method: "PATCH",
         body: JSON.stringify({ prefs }),
-      });
-    } catch {
-      // ignore
-    }
-    return await this.getState();
-  },
-
-  async createStripeSession(itemId: string): Promise<string> {
-    const data = await fetchJson("/api/store/checkout", {
-      method: "POST",
-      body: JSON.stringify({ itemId }),
-    });
-    return String(data?.sessionId ?? "");
-  },
-
-  async handleStripeWebhook(sessionId: string): Promise<AppState> {
-    try {
-      await fetchJson("/api/store/webhook", {
-        method: "POST",
-        body: JSON.stringify({ sessionId }),
       });
     } catch {
       // ignore
