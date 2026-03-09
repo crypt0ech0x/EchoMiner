@@ -58,8 +58,8 @@ function shapeResponse(args: {
       endsAt: args.session?.endsAt ? args.session.endsAt.toISOString() : null,
     },
     streak: {
-      currentStreak: args.streak.currentStreak,
-      nextMultiplier: args.streak.nextMultiplier,
+      currentStreak: Number(args.streak.currentStreak ?? 0),
+      nextMultiplier: Number(args.streak.nextMultiplier ?? 1),
       lastSessionEndAt: args.streak.lastSessionEndAt
         ? args.streak.lastSessionEndAt.toISOString()
         : null,
@@ -89,6 +89,7 @@ async function getState() {
   }
 
   const settled = await settleMiningSession(authedUser.id);
+
   const wallet = await prisma.wallet.findFirst({
     where: { userId: authedUser.id },
     select: {
@@ -98,19 +99,23 @@ async function getState() {
     },
   });
 
+  // IMPORTANT:
+  // If a session is currently active, the visible streak on the Mine tab
+  // should reflect that active session's multiplier/day count.
   let streak;
-  if (settled.isActive && settled.endsAt) {
+  if (settled.isActive) {
+    const activeStreak = Number(settled.multiplier ?? 1);
     streak = {
-      currentStreak: Number(settled.multiplier ?? 1),
-      nextMultiplier: Number(settled.multiplier ?? 1) + 1,
+      currentStreak: activeStreak,
+      nextMultiplier: activeStreak + 1,
       lastSessionEndAt: settled.endsAt,
-      graceEndsAt: getGraceEndsAt(settled.endsAt),
+      graceEndsAt: settled.endsAt ? getGraceEndsAt(settled.endsAt) : null,
     };
   } else {
     const plan = await getNextSessionPlan(authedUser.id);
     streak = {
-      currentStreak: plan.currentStreak,
-      nextMultiplier: plan.nextMultiplier,
+      currentStreak: Number(plan.currentStreak ?? 0),
+      nextMultiplier: Number(plan.nextMultiplier ?? 1),
       lastSessionEndAt: plan.lastSessionEndAt,
       graceEndsAt: plan.graceEndsAt,
     };
