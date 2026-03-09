@@ -24,7 +24,8 @@ export default function EchoMinerApp() {
 
   const [now, setNow] = useState(() => Date.now());
 
-  const connectedWalletAddress = connected && publicKey ? publicKey.toBase58() : null;
+  const connectedWalletAddress =
+    connected && publicKey ? publicKey.toBase58() : null;
   const serverWalletAddress = state?.wallet?.address ?? null;
 
   useEffect(() => {
@@ -35,7 +36,10 @@ export default function EchoMinerApp() {
   useEffect(() => {
     try {
       if (connected && publicKey) {
-        sessionStorage.setItem("connected_wallet_address", publicKey.toBase58());
+        sessionStorage.setItem(
+          "connected_wallet_address",
+          publicKey.toBase58()
+        );
       } else {
         sessionStorage.removeItem("connected_wallet_address");
       }
@@ -95,7 +99,7 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
-  // Full session live number for the center mining display
+  // Full session value for the center mining display
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -103,15 +107,17 @@ export default function EchoMinerApp() {
     const lastAccruedAt = state.session.lastAccruedAt ?? null;
 
     if (!lastAccruedAt) return base;
-    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) return base;
+    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) {
+      return base;
+    }
 
     const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
     return base + deltaSec * effectiveRatePerSec;
   }, [state, now, effectiveRatePerSec]);
 
   // Correct top balance card total:
-  // settled total already includes session accrual up to lastAccruedAt,
-  // so only add the tiny unsmoothed delta since lastAccruedAt.
+  // settled total already includes accrual up to lastAccruedAt,
+  // so only add the unsmoothed delta since then.
   const balanceCardTotal = useMemo(() => {
     const settledTotal = Number(state?.user?.totalMined ?? 0);
 
@@ -119,7 +125,9 @@ export default function EchoMinerApp() {
 
     const lastAccruedAt = state.session.lastAccruedAt ?? null;
     if (!lastAccruedAt) return settledTotal;
-    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) return settledTotal;
+    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) {
+      return settledTotal;
+    }
 
     const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
     return settledTotal + deltaSec * effectiveRatePerSec;
@@ -203,7 +211,10 @@ export default function EchoMinerApp() {
                 const updated = await EchoAPI.startSession();
                 setState(updated);
               } catch (e: any) {
-                if (e?.status === 409 && e?.data?.error === "Wallet session mismatch") {
+                if (
+                  e?.status === 409 &&
+                  e?.data?.error === "Wallet session mismatch"
+                ) {
                   try {
                     localStorage.removeItem(EchoAPI.STORAGE_KEY);
                   } catch {
