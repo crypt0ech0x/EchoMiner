@@ -10,15 +10,24 @@ type ApiState = {
     verifiedAt: string | null;
   };
   user: {
-    totalMinedEcho: number;
+    totalMinedEcho?: number;
+    totalMined?: number;
   };
   session: {
     isActive: boolean;
     startedAt: string | null;
     lastAccruedAt: string | null;
-    baseRatePerHr: number;
+    endsAt?: string | null;
+    baseRatePerHr?: number;
+    baseRate?: number;
     multiplier: number;
     sessionMined: number;
+  };
+  streak?: {
+    currentStreak?: number;
+    lastSessionEndAt?: string | null;
+    graceEndsAt?: string | null;
+    nextMultiplier?: number;
   };
 };
 
@@ -124,28 +133,37 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
 
   const totalMinedEcho = Number(
     api.user?.totalMinedEcho ??
-    (api.user as any)?.totalMined ??
-    0
+      (api.user as any)?.totalMined ??
+      0
   );
 
   const isActive = !!api.session?.isActive;
-  const startedAtMs = api.session?.startedAt ? new Date(api.session.startedAt).getTime() : null;
+  const startedAtMs = api.session?.startedAt
+    ? new Date(api.session.startedAt).getTime()
+    : null;
+
   const lastAccruedAtMs = api.session?.lastAccruedAt
     ? new Date(api.session.lastAccruedAt).getTime()
     : null;
 
+  const endsAtMs = api.session?.endsAt
+    ? new Date(api.session.endsAt).getTime()
+    : null;
+
   const baseRatePerHr = Number(
-  api.session?.baseRatePerHr ??
-  (api.session as any)?.baseRate ??
-  0
-);
+    api.session?.baseRatePerHr ??
+      (api.session as any)?.baseRate ??
+      0
+  );
 
   const multiplier = Number(api.session?.multiplier ?? 1);
   const sessionMined = Number(api.session?.sessionMined ?? 0);
 
-  const effectiveRatePerSec = baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
-  const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
-  const endTimeMs = startedAtMs ? startedAtMs + TWENTY_FOUR_HOURS_MS : null;
+  const effectiveRatePerSec =
+    baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
+
+  const fallbackEndTimeMs =
+    startedAtMs != null ? startedAtMs + 24 * 60 * 60 * 1000 : null;
 
   return {
     ...base,
@@ -154,7 +172,9 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     wallet,
 
     walletAddress: wallet.address,
-    walletVerifiedAt: wallet.verifiedAt ? new Date(wallet.verifiedAt).getTime() : null,
+    walletVerifiedAt: wallet.verifiedAt
+      ? new Date(wallet.verifiedAt).getTime()
+      : null,
 
     user: {
       ...base.user,
@@ -163,12 +183,25 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
       guest: !api.authed,
     },
 
+    streak: {
+      ...base.streak,
+      currentStreak: Number(api.streak?.currentStreak ?? 0),
+      lastSessionStartAt: base.streak.lastSessionStartAt,
+      lastSessionEndAt: api.streak?.lastSessionEndAt
+        ? new Date(api.streak.lastSessionEndAt).getTime()
+        : null,
+      graceEndsAt: api.streak?.graceEndsAt
+        ? new Date(api.streak.graceEndsAt).getTime()
+        : null,
+      nextMultiplier: Number(api.streak?.nextMultiplier ?? 1),
+    },
+
     session: {
       ...base.session,
       isActive,
       status: isActive ? "active" : "ended",
       startTime: startedAtMs,
-      endTime: endTimeMs,
+      endTime: endsAtMs ?? fallbackEndTimeMs,
       baseRate: baseRatePerHr / 3600,
       effectiveRate: effectiveRatePerSec,
       baseRatePerHr,
@@ -251,14 +284,10 @@ export const EchoAPI = {
     return await this.getState();
   },
 
-  async startSession(payload?: {
-    baseRatePerHr?: number;
-    multiplier?: number;
-  }): Promise<AppState> {
+  async startSession(): Promise<AppState> {
     await fetchJson("/api/mining/start", {
       method: "POST",
       body: JSON.stringify({
-        ...(payload ?? {}),
         walletAddress: getConnectedWalletAddress(),
       }),
     });
