@@ -74,6 +74,7 @@ function defaultAppState(): AppState {
       lastSessionStartAt: null,
       lastSessionEndAt: null,
       graceEndsAt: null,
+      nextMultiplier: 1,
     },
 
     session: {
