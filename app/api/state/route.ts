@@ -2,7 +2,11 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getUserFromSessionCookie } from "@/lib/auth";
-import { settleMiningSession } from "@/lib/mining";
+import {
+  settleMiningSession,
+  getNextSessionPlan,
+  getGraceEndsAt,
+} from "@/lib/mining";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +26,14 @@ function shapeResponse(args: {
     baseRatePerHr: number;
     multiplier: number;
     sessionMined: number;
+    endsAt: Date | null;
   } | null;
+  streak: {
+    currentStreak: number;
+    nextMultiplier: number;
+    lastSessionEndAt: Date | null;
+    graceEndsAt: Date | null;
+  };
 }) {
   return {
     ok: true,
@@ -44,6 +55,17 @@ function shapeResponse(args: {
       baseRatePerHr: Number(args.session?.baseRatePerHr ?? 0),
       multiplier: Number(args.session?.multiplier ?? 1),
       sessionMined: Number(args.session?.sessionMined ?? 0),
+      endsAt: args.session?.endsAt ? args.session.endsAt.toISOString() : null,
+    },
+    streak: {
+      currentStreak: args.streak.currentStreak,
+      nextMultiplier: args.streak.nextMultiplier,
+      lastSessionEndAt: args.streak.lastSessionEndAt
+        ? args.streak.lastSessionEndAt.toISOString()
+        : null,
+      graceEndsAt: args.streak.graceEndsAt
+        ? args.streak.graceEndsAt.toISOString()
+        : null,
     },
   };
 }
@@ -57,11 +79,16 @@ async function getState() {
       wallet: null,
       totalMinedEcho: 0,
       session: null,
+      streak: {
+        currentStreak: 0,
+        nextMultiplier: 1,
+        lastSessionEndAt: null,
+        graceEndsAt: null,
+      },
     });
   }
 
   const settled = await settleMiningSession(authedUser.id);
-
   const wallet = await prisma.wallet.findFirst({
     where: { userId: authedUser.id },
     select: {
@@ -70,6 +97,24 @@ async function getState() {
       verifiedAt: true,
     },
   });
+
+  let streak;
+  if (settled.isActive && settled.endsAt) {
+    streak = {
+      currentStreak: Number(settled.multiplier ?? 1),
+      nextMultiplier: Number(settled.multiplier ?? 1) + 1,
+      lastSessionEndAt: settled.endsAt,
+      graceEndsAt: getGraceEndsAt(settled.endsAt),
+    };
+  } else {
+    const plan = await getNextSessionPlan(authedUser.id);
+    streak = {
+      currentStreak: plan.currentStreak,
+      nextMultiplier: plan.nextMultiplier,
+      lastSessionEndAt: plan.lastSessionEndAt,
+      graceEndsAt: plan.graceEndsAt,
+    };
+  }
 
   return shapeResponse({
     authed: true,
@@ -82,7 +127,9 @@ async function getState() {
       baseRatePerHr: settled.baseRatePerHr,
       multiplier: settled.multiplier,
       sessionMined: settled.sessionMined,
+      endsAt: settled.endsAt,
     },
+    streak,
   });
 }
 
