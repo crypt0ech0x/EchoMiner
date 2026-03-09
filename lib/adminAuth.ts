@@ -1,58 +1,108 @@
-// lib/adminAuth.ts
+// lib/admin-auth.ts
 import "server-only";
 import crypto from "crypto";
 import { cookies } from "next/headers";
 
-const ADMIN_COOKIE = "echo_admin";
-const TTL_SECONDS = 60 * 60 * 12; // 12 hours
+const ADMIN_COOKIE_NAME = "echo_admin_session";
+const ADMIN_COOKIE_TTL_SECONDS = 60 * 60 * 12; // 12 hours
 
-function requireSecret() {
-  const secret = process.env.ADMIN_COOKIE_SECRET;
-  if (!secret) throw new Error("Missing ADMIN_COOKIE_SECRET env var");
-  return secret;
+function getAdminSecret() {
+  return process.env.ADMIN_COOKIE_SECRET || "dev_admin_secret_change_me";
 }
 
-function sign(payload: string) {
-  const secret = requireSecret();
-  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+function sign(value: string) {
+  return crypto
+    .createHmac("sha256", getAdminSecret())
+    .update(value)
+    .digest("hex");
 }
 
-export async function setAdminCookie() {
-  const now = Date.now();
-  const exp = now + TTL_SECONDS * 1000;
-  const payload = `${exp}`;
+function safeEqual(a: string, b: string) {
+  const aBuf = Buffer.from(a);
+  const bBuf = Buffer.from(b);
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
+}
+
+function makeCookieValue(username: string, expiresAtMs: number) {
+  const payload = `${username}.${expiresAtMs}`;
   const sig = sign(payload);
-  const value = `${payload}.${sig}`;
+  return `${payload}.${sig}`;
+}
 
-  const store = await cookies();
-  store.set(ADMIN_COOKIE, value, {
+function parseCookieValue(value: string | undefined) {
+  if (!value) return null;
+
+  const parts = value.split(".");
+  if (parts.length < 3) return null;
+
+  const sig = parts.pop() as string;
+  const expiresAtRaw = parts.pop() as string;
+  const username = parts.join(".");
+
+  const payload = `${username}.${expiresAtRaw}`;
+  const expectedSig = sign(payload);
+
+  if (!safeEqual(sig, expectedSig)) return null;
+
+  const expiresAtMs = Number(expiresAtRaw);
+  if (!Number.isFinite(expiresAtMs)) return null;
+  if (Date.now() > expiresAtMs) return null;
+
+  return {
+    username,
+    expiresAtMs,
+  };
+}
+
+export async function isAdminAuthenticated() {
+  const cookieStore = await cookies();
+  const raw = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
+  return !!parseCookieValue(raw);
+}
+
+export async function requireAdminRequest() {
+  const ok = await isAdminAuthenticated();
+  return ok;
+}
+
+export async function createAdminSession(username: string) {
+  const cookieStore = await cookies();
+  const expiresAtMs = Date.now() + ADMIN_COOKIE_TTL_SECONDS * 1000;
+  const value = makeCookieValue(username, expiresAtMs);
+
+  cookieStore.set(ADMIN_COOKIE_NAME, value, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: TTL_SECONDS,
+    maxAge: ADMIN_COOKIE_TTL_SECONDS,
+  });
+
+  return { expiresAtMs };
+}
+
+export async function clearAdminSession() {
+  const cookieStore = await cookies();
+  cookieStore.delete({
+    name: ADMIN_COOKIE_NAME,
+    path: "/",
   });
 }
 
-export async function clearAdminCookie() {
-  const store = await cookies();
-  store.delete(ADMIN_COOKIE);
-}
+export function validateAdminCredentials(username: string, password: string) {
+  const envUser = process.env.ADMIN_USER || "";
+  const envPass = process.env.ADMIN_PASS || "";
 
-export async function isAdminAuthed(): Promise<boolean> {
-  const store = await cookies();
-  const token = store.get(ADMIN_COOKIE)?.value;
-  if (!token) return false;
+  if (!envUser || !envPass) return false;
 
-  const [payload, sig] = token.split(".");
-  if (!payload || !sig) return false;
+  const userOk =
+    username.length === envUser.length &&
+    safeEqual(username, envUser);
 
-  const expected = sign(payload);
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return false;
+  const passOk =
+    password.length === envPass.length &&
+    safeEqual(password, envPass);
 
-  const exp = Number(payload);
-  if (!Number.isFinite(exp)) return false;
-  if (Date.now() > exp) return false;
-
-  return true;
+  return userOk && passOk;
 }
