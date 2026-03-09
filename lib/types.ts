@@ -37,8 +37,9 @@ export interface UserStats {
   username: string;
 
   // UI balance display fields
-  balance: number;      // legacy (can stay 0 if not used)
-  totalMined: number;   // should mirror server totalMinedEcho
+  balance: number;         // mined + purchased
+  totalMined: number;      // mirrors server totalMinedEcho
+  totalPurchased: number;  // mirrors server totalPurchasedEcho
 
   referrals: number;
   joinedDate: number; // ms
@@ -60,7 +61,7 @@ export interface StreakInfo {
   lastSessionStartAt: number | null;
   lastSessionEndAt: number | null;
   graceEndsAt: number | null;
-  nextMultiplier?: number;
+  nextMultiplier: number;
 }
 
 export interface WalletState {
@@ -88,7 +89,7 @@ export interface MiningSession {
   // ----- legacy UI fields -----
   startTime: number | null; // ms
   endTime: number | null;   // ms
-  baseRate: number;         // legacy UI base (can be derived from baseRatePerHr/3600)
+  baseRate: number;         // derived from baseRatePerHr / 3600
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
@@ -102,11 +103,11 @@ export interface MiningSession {
   status: "active" | "ended" | "settled";
 
   // ----- server truth fields -----
-  sessionMined: number;        // current session mined (server truth)
+  sessionMined: number;
   lastAccruedAt: number | null; // ms timestamp
 
-  baseRatePerHr: number; // server base rate per hour
-  multiplier: number;    // server multiplier
+  baseRatePerHr: number;
+  multiplier: number;
 }
 
 export interface ActiveBoost {
