@@ -9,22 +9,40 @@ generator client {
 }
 
 model User {
-  id                 String         @id @default(cuid())
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  id                   String              @id @default(cuid())
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
 
-  email              String?        @unique
-  totalMinedEcho     Float          @default(0)
-  totalPurchasedEcho Float          @default(0)
+  email                String?             @unique
+  totalMinedEcho       Float               @default(0)
+  totalPurchasedEcho   Float               @default(0)
+  totalReferralEcho    Float               @default(0)
+  totalBonusEcho       Float               @default(0)
 
-  wallet             Wallet?
-  miningSession      MiningSession?
-  miningHistory      MiningHistory[]
-  sessions           Session[]
-  purchases          Purchase[]
+  purchaseMultiplier   Float               @default(1)
+  referralMultiplier   Float               @default(1)
+  riskScore            Float               @default(0)
+
+  referralCode         String?             @unique
+  referredByUserId     String?
+  referredByUser       User?               @relation("UserReferredBy", fields: [referredByUserId], references: [id], onDelete: SetNull)
+  referredUsers        User[]              @relation("UserReferredBy")
+
+  wallet               Wallet?
+  miningSession        MiningSession?
+  miningHistory        MiningHistory[]
+  sessions             Session[]
+  purchases            Purchase[]
+  ledgerEntries        LedgerEntry[]
+  referralsMade        Referral[]          @relation("ReferralReferrer")
+  referralsReceived    Referral[]          @relation("ReferralReferred")
+  leaderboardRewards   LeaderboardReward[]
+  claimAllocations     ClaimAllocation[]
 
   @@index([totalMinedEcho])
   @@index([totalPurchasedEcho])
+  @@index([referralCode])
+  @@index([riskScore])
 }
 
 model Wallet {
@@ -122,4 +140,93 @@ model Purchase {
   @@index([walletAddress])
   @@index([status])
   @@index([createdAt])
+}
+
+model LedgerEntry {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type         String
+  amountEcho   Float
+  sourceType   String?
+  sourceId     String?
+  metadataJson Json?
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model Referral {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  qualifiedAt     DateTime?
+
+  referrerUserId  String
+  referrerUser    User     @relation("ReferralReferrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
+
+  referredUserId  String   @unique
+  referredUser    User     @relation("ReferralReferred", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  status          String   @default("pending")
+
+  @@index([referrerUserId])
+  @@index([status])
+}
+
+model LeaderboardReward {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  periodKey   String
+  rank        Int
+  multiplier  Float
+  startsAt    DateTime
+  endsAt      DateTime
+
+  @@index([userId])
+  @@index([periodKey])
+  @@index([startsAt, endsAt])
+}
+
+model ClaimAllocation {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  walletAddress   String
+  snapshotId      String
+  snapshotAmount  Float
+  claimableAmount Float
+  claimedAmount   Float    @default(0)
+  claimedAt       DateTime?
+
+  status          String   @default("unclaimed")
+
+  @@index([userId])
+  @@index([walletAddress])
+  @@index([snapshotId])
+  @@index([status])
+}
+
+model DailyMetric {
+  id            String   @id @default(cuid())
+  date          DateTime @unique
+
+  newWallets    Int      @default(0)
+  activeMiners  Int      @default(0)
+  echoMined     Float    @default(0)
+  echoPurchased Float    @default(0)
+  solRevenue    Float    @default(0)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
