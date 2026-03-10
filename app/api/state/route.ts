@@ -18,8 +18,14 @@ function shapeResponse(args: {
     verified: boolean;
     verifiedAt: Date | null;
   } | null;
-  totalMinedEcho: number;
-  totalPurchasedEcho: number;
+  user: {
+    totalMinedEcho: number;
+    totalPurchasedEcho: number;
+    purchaseMultiplier: number;
+    referralMultiplier: number;
+    riskScore: number;
+    referralCode: string | null;
+  };
   session: {
     isActive: boolean;
     startedAt: Date | null;
@@ -45,8 +51,12 @@ function shapeResponse(args: {
       verifiedAt: args.wallet?.verifiedAt ? args.wallet.verifiedAt.toISOString() : null,
     },
     user: {
-      totalMinedEcho: Number(args.totalMinedEcho ?? 0),
-      totalPurchasedEcho: Number(args.totalPurchasedEcho ?? 0),
+      totalMinedEcho: Number(args.user.totalMinedEcho ?? 0),
+      totalPurchasedEcho: Number(args.user.totalPurchasedEcho ?? 0),
+      purchaseMultiplier: Number(args.user.purchaseMultiplier ?? 1),
+      referralMultiplier: Number(args.user.referralMultiplier ?? 1),
+      riskScore: Number(args.user.riskScore ?? 0),
+      referralCode: args.user.referralCode ?? null,
     },
     session: {
       isActive: args.session?.isActive ?? false,
@@ -79,8 +89,14 @@ async function getState() {
     return shapeResponse({
       authed: false,
       wallet: null,
-      totalMinedEcho: 0,
-      totalPurchasedEcho: 0,
+      user: {
+        totalMinedEcho: 0,
+        totalPurchasedEcho: 0,
+        purchaseMultiplier: 1,
+        referralMultiplier: 1,
+        riskScore: 0,
+        referralCode: null,
+      },
       session: null,
       streak: {
         currentStreak: 0,
@@ -93,19 +109,23 @@ async function getState() {
 
   const settled = await settleMiningSession(authedUser.id);
 
-  const user = await prisma.user.findUnique({
-    where: { id: authedUser.id },
-    select: {
-      totalPurchasedEcho: true,
-    },
-  });
-
   const wallet = await prisma.wallet.findFirst({
     where: { userId: authedUser.id },
     select: {
       address: true,
       verified: true,
       verifiedAt: true,
+    },
+  });
+
+  const userTotals = await prisma.user.findUnique({
+    where: { id: authedUser.id },
+    select: {
+      totalPurchasedEcho: true,
+      purchaseMultiplier: true,
+      referralMultiplier: true,
+      riskScore: true,
+      referralCode: true,
     },
   });
 
@@ -131,8 +151,14 @@ async function getState() {
   return shapeResponse({
     authed: true,
     wallet,
-    totalMinedEcho: settled.totalMinedEcho,
-    totalPurchasedEcho: Number(user?.totalPurchasedEcho ?? 0),
+    user: {
+      totalMinedEcho: settled.totalMinedEcho,
+      totalPurchasedEcho: Number(userTotals?.totalPurchasedEcho ?? 0),
+      purchaseMultiplier: Number(userTotals?.purchaseMultiplier ?? 1),
+      referralMultiplier: Number(userTotals?.referralMultiplier ?? 1),
+      riskScore: Number(userTotals?.riskScore ?? 0),
+      referralCode: userTotals?.referralCode ?? null,
+    },
     session: {
       isActive: settled.isActive,
       startedAt: settled.startedAt,
