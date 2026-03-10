@@ -19,8 +19,8 @@ export interface AppNotification {
   type: NotificationType;
   title: string;
   body: string;
-  createdAt: number; // ms
-  readAt: number | null; // ms
+  createdAt: number;
+  readAt: number | null;
   actionUrl?: string;
 }
 
@@ -36,17 +36,20 @@ export interface UserStats {
   id: string;
   username: string;
 
-  // UI balance display fields
-  balance: number;         // mined + purchased
-  totalMined: number;      // mirrors server totalMinedEcho
-  totalPurchased: number;  // mirrors server totalPurchasedEcho
+  balance: number;
+  totalMined: number;
+  totalPurchased: number;
+
+  purchaseMultiplier: number;
+  referralMultiplier: number;
+  riskScore: number;
+  referralCode?: string | null;
 
   referrals: number;
-  joinedDate: number; // ms
+  joinedDate: number;
   guest: boolean;
-  riskScore: number;
-  referralCode: string;
-
+  riskScoreLegacy?: number;
+  referralCodeLegacy?: string;
   isAdmin?: boolean;
   priorityAirdrop?: boolean;
   pfpUrl?: string;
@@ -67,44 +70,25 @@ export interface StreakInfo {
 export interface WalletState {
   address: string | null;
   verified: boolean;
-  verifiedAt: string | null; // ISO string
+  verifiedAt: string | null;
 }
 
-/**
- * MiningSession contract
- *
- * Legacy UI expects:
- * - startTime/endTime in ms
- * - effectiveRate is PER-SECOND (MineTab uses effectiveRate * 3600 to display E/H)
- *
- * Server-backed truth:
- * - sessionMined (float)
- * - lastAccruedAt (ms)
- * - baseRatePerHr & multiplier (exact server values)
- */
 export interface MiningSession {
   id: string;
   isActive: boolean;
 
-  // ----- legacy UI fields -----
-  startTime: number | null; // ms
-  endTime: number | null;   // ms
-  baseRate: number;         // derived from baseRatePerHr / 3600
+  startTime: number | null;
+  endTime: number | null;
+  baseRate: number;
   streakMultiplier: number;
   boostMultiplier: number;
   purchaseMultiplier: number;
-
-  /**
-   * IMPORTANT: PER-SECOND rate.
-   * MineTab displays E/H via (effectiveRate * 3600).
-   */
   effectiveRate: number;
 
   status: "active" | "ended" | "settled";
 
-  // ----- server truth fields -----
   sessionMined: number;
-  lastAccruedAt: number | null; // ms timestamp
+  lastAccruedAt: number | null;
 
   baseRatePerHr: number;
   multiplier: number;
@@ -114,14 +98,14 @@ export interface ActiveBoost {
   id: string;
   type: "AD" | "STORE";
   multiplier: number;
-  startAt: number;   // ms
-  expiresAt: number; // ms
+  startAt: number;
+  expiresAt: number;
   sourceRef?: string;
 }
 
 export interface LedgerEntry {
   id: string;
-  timestamp: number; // ms
+  timestamp: number;
   deltaEcho: number;
   reason:
     | "session_settlement"
@@ -129,9 +113,15 @@ export interface LedgerEntry {
     | "admin_adjustment"
     | "purchase_topup"
     | "session_start"
-    | "boost_activation";
+    | "boost_activation"
+    | "purchase_credit"
+    | "leaderboard_reward"
+    | "claim_deduction";
   sessionId?: string;
-  hash: string;
+  hash?: string;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  metadataJson?: any;
 }
 
 export interface StoreItem {
@@ -147,11 +137,9 @@ export interface StoreItem {
 }
 
 export interface AppState {
-  // ---- server contract ----
   authed: boolean;
   wallet: WalletState;
 
-  // ---- UI contract ----
   user: UserStats;
   streak: StreakInfo;
   session: MiningSession;
@@ -161,12 +149,7 @@ export interface AppState {
   purchaseHistory: any[];
   notifications: AppNotification[];
 
-  /**
-   * Legacy wallet fields.
-   * These should ALWAYS mirror `wallet` so old UI code doesn’t explode.
-   * You can delete these after you finish refactors.
-   */
   walletAddress: string | null;
-  walletVerifiedAt: number | null; // ms
+  walletVerifiedAt: number | null;
   currentNonce: string | null;
 }
