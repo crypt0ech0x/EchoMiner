@@ -11,8 +11,12 @@ type ApiState = {
   };
   user: {
     totalMinedEcho?: number;
-    totalMined?: number;
     totalPurchasedEcho?: number;
+    purchaseMultiplier?: number;
+    referralMultiplier?: number;
+    riskScore?: number;
+    referralCode?: string | null;
+    totalMined?: number;
   };
   session: {
     isActive: boolean;
@@ -66,11 +70,14 @@ function defaultAppState(): AppState {
       balance: 0,
       totalMined: 0,
       totalPurchased: 0,
+      purchaseMultiplier: 1,
+      referralMultiplier: 1,
+      riskScore: 0,
+      referralCode: null,
       referrals: 0,
       joinedDate: now,
       guest: true,
-      riskScore: 0,
-      referralCode: "VOYAGER",
+      referralCodeLegacy: "VOYAGER",
       notificationPreferences: {
         session_end: true,
         streak_grace_warning: true,
@@ -140,6 +147,9 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
   );
 
   const totalPurchasedEcho = Number(api.user?.totalPurchasedEcho ?? 0);
+  const purchaseMultiplier = Number(api.user?.purchaseMultiplier ?? 1);
+  const referralMultiplier = Number(api.user?.referralMultiplier ?? 1);
+  const riskScore = Number(api.user?.riskScore ?? 0);
 
   const isActive = !!api.session?.isActive;
   const startedAtMs = api.session?.startedAt
@@ -184,6 +194,10 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
       ...base.user,
       totalMined: totalMinedEcho,
       totalPurchased: totalPurchasedEcho,
+      purchaseMultiplier,
+      referralMultiplier,
+      riskScore,
+      referralCode: api.user?.referralCode ?? null,
       balance: totalMinedEcho + totalPurchasedEcho,
       guest: !api.authed,
     },
@@ -213,6 +227,7 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
       multiplier,
       sessionMined,
       lastAccruedAt: lastAccruedAtMs,
+      purchaseMultiplier,
     },
   };
 }
@@ -323,6 +338,25 @@ export const EchoAPI = {
     return await this.getState();
   },
 
+  async getLedger() {
+    return await fetchJson("/api/ledger", { method: "GET" });
+  },
+
+  async getReferralStats() {
+    return await fetchJson("/api/referrals/stats", { method: "GET" });
+  },
+
+  async applyReferralCode(code: string) {
+    return await fetchJson("/api/referrals/apply", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  async getReferralCode() {
+    return await fetchJson("/api/referrals/code", { method: "GET" });
+  },
+
   async activateAdBoost(): Promise<AppState> {
     try {
       await fetchJson("/api/boost/activate", { method: "POST" });
@@ -330,11 +364,6 @@ export const EchoAPI = {
       // ignore
     }
     return await this.getState();
-  },
-
-  async getSnapshotCSV(): Promise<string> {
-    const data = await fetchJson("/api/snapshot", { method: "POST" });
-    return String(data?.csv ?? "");
   },
 
   async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
