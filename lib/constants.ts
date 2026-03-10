@@ -1,5 +1,5 @@
 
-import { StoreItem } from './types';
+import { StoreItem } from '@/lib/types';
 
 export const BASE_MINING_RATE = 0.0001543;
 export const SESSION_DURATION_MS = 24 * 60 * 60 * 1000;
