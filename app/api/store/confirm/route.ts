@@ -11,6 +11,7 @@ import {
   solToLamports,
   verifySolTransfer,
 } from "@/lib/solana-payments";
+import { getPurchaseMultiplier } from "@/lib/economy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -133,10 +134,35 @@ export async function POST(req: Request) {
         },
       });
 
-      await tx.user.update({
+      const updatedUser = await tx.user.update({
         where: { id: purchase.userId },
         data: {
           totalPurchasedEcho: { increment: purchase.echoAmount },
+        },
+        select: {
+          totalPurchasedEcho: true,
+        },
+      });
+
+      await tx.user.update({
+        where: { id: purchase.userId },
+        data: {
+          purchaseMultiplier: getPurchaseMultiplier(updatedUser.totalPurchasedEcho),
+        },
+      });
+
+      await tx.ledgerEntry.create({
+        data: {
+          userId: purchase.userId,
+          type: "purchase_credit",
+          amountEcho: purchase.echoAmount,
+          sourceType: "purchase",
+          sourceId: purchase.id,
+          metadataJson: {
+            packageId: purchase.packageId,
+            solAmount: purchase.solAmount,
+            txSignature,
+          },
         },
       });
     });
