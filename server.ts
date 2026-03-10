@@ -75,23 +75,26 @@ export class AuthoritativeServer {
 
     return {
       user: {
-        id: 'user_' + Math.random().toString(36).substr(2, 9),
-        username: refCode,
-        balance: 0,
-        totalMined: 0,
-        referrals: 0,
-        joinedDate: now,
-        guest: true,
-        riskScore: 0,
-        referralCode: refCode,
-        isAdmin: false,
-        priorityAirdrop: false,
-        notificationPreferences: {
-          session_end: true,
-          streak_grace_warning: true,
-          boost_expired: true,
-          weekly_summary: true,
-          airdrop_announcement: true
+  id: 'user_' + Math.random().toString(36).substr(2, 9),
+  username: refCode,
+  balance: 0,
+  totalMined: 0,
+  totalPurchased: 0,
+  purchaseMultiplier: 1,
+  referralMultiplier: 1,
+  referrals: 0,
+  joinedDate: Date.now(),
+  guest: true,
+  riskScore: 0,
+  referralCode: refCode,
+  isAdmin: false,
+  priorityAirdrop: false,
+  notificationPreferences: {
+    session_end: true,
+    streak_grace_warning: true,
+    boost_expired: true,
+    weekly_summary: true,
+    airdrop_announcement: true,
         }
       },
       streak: {
