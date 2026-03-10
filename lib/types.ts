@@ -11,8 +11,8 @@ export type AdProviderName = "adgem" | "adjoe" | "adsgram" | "mock";
 
 export interface AdProvider {
   loadRewarded(): Promise<void>;
-  showRewarded(): Promise<void>;
-  setRewardCallback(callback: () => void): void;
+  showRewarded(): Promise<boolean>;
+  onReward(callback: () => void): void;
 }
 
 export type NotificationType =
