@@ -5,6 +5,7 @@ export type StorePackage = {
   name: string;
   solAmount: number;
   echoAmount: number;
+  badge?: string;
   description: string;
 };
 
@@ -14,24 +15,27 @@ export const STORE_PACKAGES: StorePackage[] = [
     name: "Starter Pack",
     solAmount: 0.1,
     echoAmount: 100,
-    description: "Kickstart your balance.",
+    badge: "Entry",
+    description: "Get your first ECHO boost with a small SOL purchase.",
   },
   {
     id: "pro",
     name: "Pro Pack",
     solAmount: 0.5,
     echoAmount: 600,
-    description: "Better value for active miners.",
+    badge: "Popular",
+    description: "Best early value for building your ECHO balance faster.",
   },
   {
     id: "whale",
     name: "Whale Pack",
     solAmount: 1,
     echoAmount: 1400,
-    description: "Maximum acceleration.",
+    badge: "Best Value",
+    description: "Largest pack for users who want maximum acceleration.",
   },
 ];
 
 export function getStorePackage(packageId: string) {
-  return STORE_PACKAGES.find((p) => p.id === packageId) ?? null;
+  return STORE_PACKAGES.find((pkg) => pkg.id === packageId) ?? null;
 }
