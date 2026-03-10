@@ -1,8 +1,8 @@
 // lib/solana-payments.ts
 import "server-only";
 import {
-  Commitment,
   Connection,
+  Finality,
   LAMPORTS_PER_SOL,
   ParsedInstruction,
   PartiallyDecodedInstruction,
@@ -17,16 +17,18 @@ function getRpcUrl() {
   return url;
 }
 
-function getCommitment(): Commitment {
+function getFinality(): Finality {
   const value = (process.env.SOLANA_COMMITMENT || "finalized").trim();
+
   if (value === "processed" || value === "confirmed" || value === "finalized") {
     return value;
   }
+
   return "finalized";
 }
 
 export function getSolanaConnection() {
-  return new Connection(getRpcUrl(), getCommitment());
+  return new Connection(getRpcUrl(), getFinality());
 }
 
 export function getTreasuryWalletAddress() {
@@ -68,7 +70,7 @@ export async function verifySolTransfer(args: {
     const connection = getSolanaConnection();
 
     const tx = await connection.getParsedTransaction(args.signature, {
-      commitment: getCommitment(),
+      commitment: getFinality(),
       maxSupportedTransactionVersion: 0,
     });
 
@@ -106,7 +108,10 @@ export async function verifySolTransfer(args: {
     }
 
     if (!matched) {
-      return { ok: false, error: "No matching SOL transfer found in transaction" };
+      return {
+        ok: false,
+        error: "No matching SOL transfer found in transaction",
+      };
     }
 
     return {
@@ -116,6 +121,9 @@ export async function verifySolTransfer(args: {
     };
   } catch (err) {
     console.error("verifySolTransfer error:", err);
-    return { ok: false, error: "Failed to verify transaction" };
+    return {
+      ok: false,
+      error: "Failed to verify transaction",
+    };
   }
 }
