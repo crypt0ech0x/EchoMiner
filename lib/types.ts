@@ -7,6 +7,8 @@ export enum Tab {
   WALLET = "wallet",
 }
 
+export type AdProvider = "adgem" | "adjoe" | "adsgram" | "mock";
+
 export type NotificationType =
   | "session_end"
   | "streak_grace_warning"
@@ -35,21 +37,18 @@ export interface NotificationPreferences {
 export interface UserStats {
   id: string;
   username: string;
-
   balance: number;
   totalMined: number;
   totalPurchased: number;
-
   purchaseMultiplier: number;
   referralMultiplier: number;
-  riskScore: number;
-  referralCode?: string | null;
 
   referrals: number;
   joinedDate: number;
   guest: boolean;
-  riskScoreLegacy?: number;
-  referralCodeLegacy?: string;
+  riskScore: number;
+  referralCode?: string | null;
+
   isAdmin?: boolean;
   priorityAirdrop?: boolean;
   pfpUrl?: string;
@@ -113,15 +112,9 @@ export interface LedgerEntry {
     | "admin_adjustment"
     | "purchase_topup"
     | "session_start"
-    | "boost_activation"
-    | "purchase_credit"
-    | "leaderboard_reward"
-    | "claim_deduction";
+    | "boost_activation";
   sessionId?: string;
   hash?: string;
-  sourceType?: string | null;
-  sourceId?: string | null;
-  metadataJson?: any;
 }
 
 export interface StoreItem {
