@@ -98,11 +98,12 @@ export class AuthoritativeServer {
         }
       },
       streak: {
-        currentStreak: 0,
-        lastSessionStartAt: null,
-        lastSessionEndAt: null,
-        graceEndsAt: null
-      },
+  currentStreak: 0,
+  lastSessionStartAt: null,
+  lastSessionEndAt: null,
+  graceEndsAt: null,
+  nextMultiplier: 1,
+},
       session: {
         id: '',
         isActive: false,
