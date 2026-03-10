@@ -3,7 +3,6 @@ import "server-only";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
-import type { NextResponse } from "next/server";
 
 const COOKIE_NAME = "echo_session";
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
@@ -15,6 +14,9 @@ function newSessionId() {
 /**
  * Only use an explicit env var for cross-subdomain cookies.
  * Otherwise leave domain undefined so the browser sets a host-only cookie.
+ *
+ * Example:
+ * COOKIE_DOMAIN=.echominer.fun
  */
 function cookieDomain() {
   const raw = process.env.COOKIE_DOMAIN?.trim();
@@ -27,8 +29,8 @@ function cookieOptions(maxAgeSeconds?: number) {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax" as const,
     path: "/",
-    domain: ".echominer.fun",   // 🔑 CRITICAL FIX
     ...(typeof maxAgeSeconds === "number" ? { maxAge: maxAgeSeconds } : {}),
+    ...(cookieDomain() ? { domain: cookieDomain() } : {}),
   };
 }
 
@@ -42,21 +44,18 @@ export async function createSessionForUser(
   const expiresAt = new Date(Date.now() + maxAgeSeconds * 1000);
 
   await prisma.session.create({
-    data: { id: sessionId, userId, expiresAt },
+    data: {
+      id: sessionId,
+      userId,
+      expiresAt,
+    },
   });
 
-  return { sessionId, expiresAt, maxAgeSeconds };
-}
+  const cookieStore = await cookies();
 
-export function attachSessionCookie(
-  response: NextResponse,
-  sessionId: string,
-  opts?: { maxAgeSeconds?: number }
-) {
-  const maxAgeSeconds = opts?.maxAgeSeconds ?? DEFAULT_SESSION_TTL_SECONDS;
+  cookieStore.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
 
-  response.cookies.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
-  return response;
+  return { sessionId, expiresAt };
 }
 
 export async function revokeSessionCookie() {
@@ -64,10 +63,19 @@ export async function revokeSessionCookie() {
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
 
   if (sessionId) {
-    await prisma.session.updateMany({
-      where: { id: sessionId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
+    try {
+      await prisma.session.updateMany({
+        where: {
+          id: sessionId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      console.error("revokeSessionCookie session update failed:", err);
+    }
   }
 
   cookieStore.delete({
@@ -80,13 +88,18 @@ export async function revokeSessionCookie() {
 export async function getUserFromSessionCookie() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
+
   if (!sessionId) return null;
 
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
       include: {
-        user: { include: { wallet: true } },
+        user: {
+          include: {
+            wallet: true,
+          },
+        },
       },
     });
 
@@ -99,4 +112,9 @@ export async function getUserFromSessionCookie() {
     console.error("getUserFromSessionCookie failed:", err);
     return null;
   }
+}
+
+export async function getSessionIdFromCookie() {
+  const cookieStore = await cookies();
+  return cookieStore.get(COOKIE_NAME)?.value ?? null;
 }
