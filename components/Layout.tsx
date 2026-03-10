@@ -1,102 +1,107 @@
-
 import React from 'react';
-import { Tab, AppState } from '../types';
+import { Tab, AppState } from '@/lib/types';
 import { Pickaxe, Zap, ShoppingCart, Wallet, User, Bell } from 'lucide-react';
 
 interface LayoutProps {
-  children: React.ReactNode;
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
   onOpenProfile: () => void;
   onOpenNotifications: () => void;
   state: AppState;
+  children: React.ReactNode;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab, onOpenProfile, onOpenNotifications, state }) => {
-  const tabs = [
-    { id: Tab.MINE, label: 'Mine', icon: Pickaxe },
-    { id: Tab.BOOST, label: 'Boost', icon: Zap },
-    { id: Tab.STORE, label: 'Store', icon: ShoppingCart },
-    { id: Tab.WALLET, label: 'Wallet', icon: Wallet },
-  ];
+const navItems = [
+  { id: Tab.MINE, label: 'Mine', icon: Pickaxe },
+  { id: Tab.BOOST, label: 'Boost', icon: Zap },
+  { id: Tab.STORE, label: 'Store', icon: ShoppingCart },
+  { id: Tab.WALLET, label: 'Wallet', icon: Wallet },
+];
 
-  const unreadCount = state.notifications.filter(n => !n.readAt).length;
-
+export default function Layout({
+  activeTab,
+  setActiveTab,
+  onOpenProfile,
+  onOpenNotifications,
+  state,
+  children,
+}: LayoutProps) {
   return (
-    <div className="flex flex-col h-full w-full relative z-10 overflow-hidden">
-      {/* Header */}
-      <header className="shrink-0 w-full">
-        <div className="max-w-lg mx-auto flex items-center justify-between px-6 py-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
-              <Pickaxe className="w-6 h-6 text-white" />
+    <div className="h-screen w-screen flex flex-col text-white overflow-hidden">
+      <header className="px-5 pt-5 pb-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-14 h-14 rounded-3xl bg-gradient-to-br from-purple-500 to-violet-700 flex items-center justify-center shadow-[0_0_30px_rgba(139,92,246,0.35)]">
+            <Pickaxe className="w-7 h-7 text-white" />
+          </div>
+
+          <div>
+            <div className="text-3xl font-black tracking-tight leading-none">
+              <span className="text-white">ECHO</span>
+              <span className="text-teal-400">MINER</span>
             </div>
-            <div>
-              <h1 className="text-xl font-black leading-none tracking-tight">ECHO<span className="text-teal-400">MINER</span></h1>
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">Pre-launch Alpha</p>
+            <div className="text-[10px] tracking-[0.35em] font-black text-white/50 mt-1 uppercase">
+              Pre-Launch Alpha
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={onOpenNotifications}
-              className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group relative"
-            >
-              <Bell className="w-5 h-5 text-slate-300 group-hover:text-white" />
-              {unreadCount > 0 && (
-                <span className="absolute top-2 right-2 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center text-[8px] font-black text-white border-2 border-[#020617] animate-pulse">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
-            <button 
-              onClick={onOpenProfile}
-              className="w-11 h-11 rounded-2xl glass flex items-center justify-center hover:bg-white/10 transition-all active:scale-95 group"
-            >
-              <User className="w-5 h-5 text-slate-300 group-hover:text-white" />
-            </button>
-          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onOpenNotifications}
+            className="w-14 h-14 rounded-3xl glass border border-white/10 flex items-center justify-center text-white/80 hover:text-white"
+            aria-label="Notifications"
+          >
+            <Bell className="w-6 h-6" />
+          </button>
+
+          <button
+            onClick={onOpenProfile}
+            className="w-14 h-14 rounded-3xl glass border border-white/10 flex items-center justify-center text-white/80 hover:text-white"
+            aria-label="Profile"
+          >
+            <User className="w-6 h-6" />
+          </button>
         </div>
       </header>
 
-      {/* Content Area */}
-      <main className="flex-1 overflow-y-auto no-scrollbar pb-32">
-        <div className="max-w-lg mx-auto w-full">
-          {children}
-        </div>
+      <main className="flex-1 min-h-0 overflow-y-auto">
+        {children}
       </main>
 
-      {/* Bottom Nav Bar */}
-      <div className="fixed bottom-0 left-0 right-0 p-6 pointer-events-none z-50">
-        <nav className="pointer-events-auto mx-auto max-w-md h-20 glass rounded-[32px] flex items-center justify-around px-4 border border-white/10 shadow-2xl relative overflow-hidden">
-          {/* Subtle bottom nav background glow */}
-          <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent"></div>
-          
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative flex flex-col items-center justify-center w-16 h-16 rounded-2xl transition-all duration-300 group ${
-                  isActive ? 'text-white' : 'text-slate-500'
-                }`}
-              >
-                {isActive && (
-                  <div className="absolute inset-0 bg-purple-500/10 rounded-2xl blur-sm transition-all duration-500"></div>
-                )}
-                <Icon className={`w-6 h-6 relative z-10 transition-transform ${isActive ? 'scale-110 text-purple-400' : 'group-hover:text-slate-300'}`} />
-                <span className="text-[10px] font-bold mt-1 relative z-10 tracking-wide">{tab.label}</span>
-                {isActive && (
-                  <div className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_12px_#8b5cf6]"></div>
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </div>
+      <nav className="px-5 pb-5 pt-3">
+        <div className="glass rounded-[32px] border border-white/10 px-3 py-3">
+          <div className="grid grid-cols-4 gap-2">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const active = activeTab === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className="relative flex flex-col items-center justify-center gap-2 py-3 rounded-2xl transition"
+                >
+                  <Icon
+                    className={`w-7 h-7 ${
+                      active ? 'text-violet-400' : 'text-slate-400'
+                    }`}
+                  />
+                  <span
+                    className={`text-sm font-bold ${
+                      active ? 'text-white' : 'text-slate-400'
+                    }`}
+                  >
+                    {item.label}
+                  </span>
+                  {active && (
+                    <div className="absolute -bottom-1 w-2 h-2 rounded-full bg-violet-400" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </nav>
     </div>
   );
-};
-
-export default Layout;
+}
