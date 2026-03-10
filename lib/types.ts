@@ -7,7 +7,13 @@ export enum Tab {
   WALLET = "wallet",
 }
 
-export type AdProvider = "adgem" | "adjoe" | "adsgram" | "mock";
+export type AdProviderName = "adgem" | "adjoe" | "adsgram" | "mock";
+
+export interface AdProvider {
+  loadRewarded(): Promise<void>;
+  showRewarded(): Promise<void>;
+  setRewardCallback(callback: () => void): void;
+}
 
 export type NotificationType =
   | "session_end"
