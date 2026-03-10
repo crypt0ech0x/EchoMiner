@@ -123,6 +123,18 @@ export interface LedgerEntry {
   hash?: string;
 }
 
+export interface PurchaseHistoryEntry {
+  id: string;
+  itemId?: string;
+  itemName?: string;
+  amountEcho: number;
+  pricePaid?: number;
+  currency?: string;
+  createdAt: number;
+  source?: "store" | "admin" | "migration";
+  metadataJson?: any;
+}
+
 export interface StoreItem {
   id: string;
   name: string;
@@ -145,7 +157,7 @@ export interface AppState {
 
   activeBoosts: ActiveBoost[];
   ledger: LedgerEntry[];
-  purchaseHistory: any[];
+  purchaseHistory: PurchaseHistoryEntry[];
   notifications: AppNotification[];
 
   walletAddress: string | null;
