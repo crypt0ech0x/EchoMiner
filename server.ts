@@ -9,7 +9,7 @@ import {
   AppNotification,
   NotificationType,
   NotificationPreferences
-} from './types';
+} from '@/lib/types';
 import { 
   BASE_MINING_RATE, 
   SESSION_DURATION_MS, 
