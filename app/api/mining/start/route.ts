@@ -11,6 +11,11 @@ import {
   DEFAULT_BASE_RATE_PER_HR,
   SESSION_DURATION_SECONDS,
 } from "@/lib/mining";
+import { getActiveLeaderboardReward } from "@/lib/leaderboard";
+import {
+  getEffectiveMultiplier,
+  getLeaderboardMultiplier,
+} from "@/lib/economy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,8 +105,31 @@ export async function POST(req: Request) {
     const endsAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
     const streakPlan = await getNextSessionPlan(authedUser.id, now);
 
+    const userMultipliers = await prisma.user.findUnique({
+      where: { id: authedUser.id },
+      select: {
+        purchaseMultiplier: true,
+        referralMultiplier: true,
+      },
+    });
+
+    const activeReward = await getActiveLeaderboardReward(authedUser.id, now);
+
+    const streakMultiplier = streakPlan.nextMultiplier;
+    const purchaseMultiplier = Number(userMultipliers?.purchaseMultiplier ?? 1);
+    const referralMultiplier = Number(userMultipliers?.referralMultiplier ?? 1);
+    const leaderboardMultiplier = getLeaderboardMultiplier(activeReward);
+    const boostMultiplier = 1;
+
+    const multiplier = getEffectiveMultiplier({
+      streakMultiplier,
+      purchaseMultiplier,
+      referralMultiplier,
+      leaderboardMultiplier,
+      boostMultiplier,
+    });
+
     const baseRatePerHr = DEFAULT_BASE_RATE_PER_HR;
-    const multiplier = streakPlan.nextMultiplier;
 
     await prisma.miningSession.upsert({
       where: { userId: authedUser.id },
@@ -129,8 +157,15 @@ export async function POST(req: Request) {
       endsAt: endsAt.toISOString(),
       baseRatePerHr,
       multiplier,
+      multiplierBreakdown: {
+        streakMultiplier,
+        purchaseMultiplier,
+        referralMultiplier,
+        leaderboardMultiplier,
+        boostMultiplier,
+      },
       streak: {
-        currentStreak: multiplier,
+        currentStreak: streakPlan.nextMultiplier,
         graceEndsAt: streakPlan.graceEndsAt ? streakPlan.graceEndsAt.toISOString() : null,
       },
     });
