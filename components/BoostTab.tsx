@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { AppState, AdProvider } from '../types';
+import { AppState, AdProvider } from '@/lib/types';
 import { PlayCircle, Zap, ShieldCheck, Info, Clock, Loader2, Star, Award } from 'lucide-react';
 import { AD_BOOST_MAX_QUEUE_MS } from '../constants';
 
