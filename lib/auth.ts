@@ -1,6 +1,7 @@
 // lib/auth.ts
 import "server-only";
 import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
@@ -13,8 +14,6 @@ function newSessionId() {
 
 /**
  * Only use an explicit env var for cross-subdomain cookies.
- * Otherwise leave domain undefined so the browser sets a host-only cookie.
- *
  * Example:
  * COOKIE_DOMAIN=.echominer.fun
  */
@@ -51,11 +50,16 @@ export async function createSessionForUser(
     },
   });
 
-  const cookieStore = await cookies();
+  return { sessionId, expiresAt, maxAgeSeconds };
+}
 
-  cookieStore.set(COOKIE_NAME, sessionId, cookieOptions(maxAgeSeconds));
-
-  return { sessionId, expiresAt };
+export function attachSessionCookie(
+  response: NextResponse,
+  sessionId: string,
+  opts?: { maxAgeSeconds?: number }
+) {
+  response.cookies.set(COOKIE_NAME, sessionId, cookieOptions(opts?.maxAgeSeconds));
+  return response;
 }
 
 export async function revokeSessionCookie() {
