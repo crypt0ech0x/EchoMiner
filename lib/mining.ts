@@ -1,9 +1,10 @@
 // lib/mining.ts
 import { prisma } from "@/lib/prisma";
+import { qualifyReferralIfNeeded } from "@/lib/referrals";
 
-export const SESSION_DURATION_SECONDS = 60 * 60 * 24; // 24 hours
-export const STREAK_GRACE_SECONDS = 60 * 60 * 24; // 24 hours
-export const DEFAULT_BASE_RATE_PER_HR = 1 / 24; // 1 ECHO per day
+export const SESSION_DURATION_SECONDS = 60 * 60 * 24;
+export const STREAK_GRACE_SECONDS = 60 * 60 * 24;
+export const DEFAULT_BASE_RATE_PER_HR = 1 / 24;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -151,6 +152,24 @@ export async function settleMiningSession(userId: string, now = new Date()) {
           baseRatePerHr: session.baseRatePerHr,
           multiplier: session.multiplier,
           totalMined: updatedSession.sessionMined,
+        },
+      });
+
+      await qualifyReferralIfNeeded(tx, userId);
+
+      await tx.ledgerEntry.create({
+        data: {
+          userId,
+          type: "session_settlement",
+          amountEcho: updatedSession.sessionMined,
+          sourceType: "miningSession",
+          sourceId: session.id,
+          metadataJson: {
+            startedAt: session.startedAt.toISOString(),
+            endedAt: endsAt.toISOString(),
+            multiplier: session.multiplier,
+            baseRatePerHr: session.baseRatePerHr,
+          },
         },
       });
 
