@@ -1,9 +1,12 @@
 // lib/solana-payments.ts
+import "server-only";
 import {
+  Commitment,
   Connection,
   LAMPORTS_PER_SOL,
+  ParsedInstruction,
+  PartiallyDecodedInstruction,
   PublicKey,
-  SystemProgram,
 } from "@solana/web3.js";
 
 function getRpcUrl() {
@@ -14,39 +17,46 @@ function getRpcUrl() {
   return url;
 }
 
-function getTreasuryWallet() {
-  const value = process.env.SOL_TREASURY_WALLET?.trim();
-  if (!value) {
-    throw new Error("Missing SOL_TREASURY_WALLET");
+function getCommitment(): Commitment {
+  const value = (process.env.SOLANA_COMMITMENT || "finalized").trim();
+  if (value === "processed" || value === "confirmed" || value === "finalized") {
+    return value;
   }
-  return new PublicKey(value);
+  return "finalized";
 }
 
 export function getSolanaConnection() {
-  return new Connection(getRpcUrl(), "finalized");
+  return new Connection(getRpcUrl(), getCommitment());
+}
+
+export function getTreasuryWalletAddress() {
+  const raw = process.env.SOL_TREASURY_WALLET?.trim();
+  if (!raw) {
+    throw new Error("Missing SOL_TREASURY_WALLET");
+  }
+  return new PublicKey(raw).toBase58();
 }
 
 export function solToLamports(solAmount: number) {
   return Math.round(solAmount * LAMPORTS_PER_SOL);
 }
 
-export function getTreasuryWalletAddress() {
-  return getTreasuryWallet().toBase58();
-}
-
 export type VerifiedSolPayment = {
   ok: true;
-  sender: string;
-  recipient: string;
-  lamports: number;
-  signature: string;
   slot: number;
+  blockTime: number | null;
 };
 
 export type FailedSolPayment = {
   ok: false;
   error: string;
 };
+
+function isParsedInstruction(
+  ix: ParsedInstruction | PartiallyDecodedInstruction
+): ix is ParsedInstruction {
+  return "parsed" in ix;
+}
 
 export async function verifySolTransfer(args: {
   signature: string;
@@ -56,8 +66,9 @@ export async function verifySolTransfer(args: {
 }): Promise<VerifiedSolPayment | FailedSolPayment> {
   try {
     const connection = getSolanaConnection();
-    const tx = await connection.getTransaction(args.signature, {
-      commitment: "finalized",
+
+    const tx = await connection.getParsedTransaction(args.signature, {
+      commitment: getCommitment(),
       maxSupportedTransactionVersion: 0,
     });
 
@@ -65,82 +76,46 @@ export async function verifySolTransfer(args: {
       return { ok: false, error: "Transaction not found" };
     }
 
-    const recipient = args.expectedRecipient;
-    const sender = args.expectedSender;
-
-    const senderKey = new PublicKey(sender).toBase58();
-    const recipientKey = new PublicKey(recipient).toBase58();
-
-    const hasExpectedAccounts = tx.transaction.message.staticAccountKeys.some(
-      (k) => k.toBase58() === senderKey
-    ) &&
-      tx.transaction.message.staticAccountKeys.some(
-        (k) => k.toBase58() === recipientKey
-      );
-
-    if (!hasExpectedAccounts) {
-      return { ok: false, error: "Transaction accounts do not match purchase wallet/treasury" };
+    if (tx.meta?.err) {
+      return { ok: false, error: "Transaction failed on chain" };
     }
 
-    const instructions = tx.transaction.message.compiledInstructions;
-    const accountKeys = tx.transaction.message.staticAccountKeys;
-
-    let foundTransfer = false;
-    let matchedLamports = 0;
+    const instructions = tx.transaction.message.instructions ?? [];
+    let matched = false;
 
     for (const ix of instructions) {
-      const programId = accountKeys[ix.programIdIndex]?.toBase58();
-      if (programId !== SystemProgram.programId.toBase58()) continue;
+      if (!isParsedInstruction(ix)) continue;
+      if (ix.program !== "system") continue;
 
-      const accounts = ix.accountKeyIndexes.map((idx) => accountKeys[idx]?.toBase58());
-      if (accounts.length < 2) continue;
+      const parsed = ix.parsed as any;
+      if (!parsed?.type || parsed.type !== "transfer") continue;
 
-      const from = accounts[0];
-      const to = accounts[1];
+      const info = parsed.info ?? {};
+      const source = String(info.source ?? "");
+      const destination = String(info.destination ?? "");
+      const lamports = Number(info.lamports ?? 0);
 
-      if (from !== senderKey || to !== recipientKey) continue;
-
-      try {
-        const raw = Buffer.from(ix.data);
-        if (raw.length < 12) continue;
-
-        const instructionType = raw.readUInt32LE(0);
-        const lamports = Number(raw.readBigUInt64LE(4));
-
-        // 2 = SystemProgram.transfer
-        if (instructionType === 2) {
-          foundTransfer = true;
-          matchedLamports = lamports;
-          break;
-        }
-      } catch {
-        // ignore parse failures
+      if (
+        source === args.expectedSender &&
+        destination === args.expectedRecipient &&
+        lamports === args.expectedLamports
+      ) {
+        matched = true;
+        break;
       }
     }
 
-    if (!foundTransfer) {
+    if (!matched) {
       return { ok: false, error: "No matching SOL transfer found in transaction" };
-    }
-
-    if (matchedLamports !== args.expectedLamports) {
-      return {
-        ok: false,
-        error: `Incorrect payment amount. Expected ${args.expectedLamports} lamports, got ${matchedLamports}`,
-      };
     }
 
     return {
       ok: true,
-      sender: senderKey,
-      recipient: recipientKey,
-      lamports: matchedLamports,
-      signature: args.signature,
       slot: tx.slot,
+      blockTime: tx.blockTime ?? null,
     };
-  } catch (err: any) {
-    return {
-      ok: false,
-      error: err?.message || "Failed to verify transaction",
-    };
+  } catch (err) {
+    console.error("verifySolTransfer error:", err);
+    return { ok: false, error: "Failed to verify transaction" };
   }
 }
