@@ -1,6 +1,7 @@
 // lib/solana-payments.ts
 import "server-only";
 import {
+  Commitment,
   Connection,
   Finality,
   LAMPORTS_PER_SOL,
@@ -17,10 +18,24 @@ function getRpcUrl() {
   return url;
 }
 
+function getConnectionCommitment(): Commitment {
+  const value = (process.env.SOLANA_COMMITMENT || "finalized").trim();
+
+  if (
+    value === "processed" ||
+    value === "confirmed" ||
+    value === "finalized"
+  ) {
+    return value;
+  }
+
+  return "finalized";
+}
+
 function getFinality(): Finality {
   const value = (process.env.SOLANA_COMMITMENT || "finalized").trim();
 
-  if (value === "processed" || value === "confirmed" || value === "finalized") {
+  if (value === "confirmed" || value === "finalized") {
     return value;
   }
 
@@ -28,7 +43,7 @@ function getFinality(): Finality {
 }
 
 export function getSolanaConnection() {
-  return new Connection(getRpcUrl(), getFinality());
+  return new Connection(getRpcUrl(), getConnectionCommitment());
 }
 
 export function getTreasuryWalletAddress() {
