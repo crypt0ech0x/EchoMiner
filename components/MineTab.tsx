@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { AppState } from '../types';
+import { AppState } from '@/lib/types';
 import { Play, TrendingUp, Flame, Zap, ChevronRight, Activity, Clock, Info, Sparkles } from 'lucide-react';
 import { GET_STREAK_MULTIPLIER } from '../constants';
 
