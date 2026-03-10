@@ -82,16 +82,21 @@ export async function getUserFromSessionCookie() {
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
   if (!sessionId) return null;
 
-  const session = await prisma.session.findUnique({
-    where: { id: sessionId },
-    include: {
-      user: { include: { wallet: true } },
-    },
-  });
+  try {
+    const session = await prisma.session.findUnique({
+      where: { id: sessionId },
+      include: {
+        user: { include: { wallet: true } },
+      },
+    });
 
-  if (!session) return null;
-  if (session.revokedAt) return null;
-  if (session.expiresAt.getTime() <= Date.now()) return null;
+    if (!session) return null;
+    if (session.revokedAt) return null;
+    if (session.expiresAt.getTime() <= Date.now()) return null;
 
-  return session.user;
+    return session.user;
+  } catch (err) {
+    console.error("getUserFromSessionCookie failed:", err);
+    return null;
+  }
 }
