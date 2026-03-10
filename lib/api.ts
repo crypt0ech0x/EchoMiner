@@ -60,7 +60,11 @@ function defaultAppState(): AppState {
 
   return {
     authed: false,
-    wallet: { address: null, verified: false, verifiedAt: null },
+    wallet: {
+      address: null,
+      verified: false,
+      verifiedAt: null,
+    },
 
     user: {
       id: "guest",
@@ -138,9 +142,7 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
   };
 
   const totalMinedEcho = Number(
-    api.user?.totalMinedEcho ??
-      (api.user as any)?.totalMined ??
-      0
+    api.user?.totalMinedEcho ?? (api.user as any)?.totalMined ?? 0
   );
 
   const totalPurchasedEcho = Number(api.user?.totalPurchasedEcho ?? 0);
@@ -161,9 +163,7 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     : null;
 
   const baseRatePerHr = Number(
-    api.session?.baseRatePerHr ??
-      (api.session as any)?.baseRate ??
-      0
+    api.session?.baseRatePerHr ?? (api.session as any)?.baseRate ?? 0
   );
 
   const multiplier = Number(api.session?.multiplier ?? 1);
@@ -228,13 +228,14 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
 
 async function fetchJson(url: string, init?: RequestInit) {
   const res = await fetch(url, {
-    ...init,
+    method: init?.method ?? "GET",
+    body: init?.body,
+    cache: "no-store",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-    cache: "no-store",
-    credentials: "include",
   });
 
   const text = await res.text();
@@ -287,14 +288,16 @@ export const EchoAPI = {
 
   async getState(): Promise<AppState> {
     const prev = this.loadLocal();
-    const api = (await fetchJson("/api/state", { method: "GET" })) as ApiState;
+    const api = (await fetchJson("/api/state")) as ApiState;
     const app = apiToAppState(api, prev);
     this.saveLocal(app);
     return app;
   },
 
   async refreshState(): Promise<AppState> {
-    await fetchJson("/api/mining/refresh", { method: "POST" });
+    await fetchJson("/api/mining/refresh", {
+      method: "POST",
+    });
     return await this.getState();
   },
 
@@ -319,7 +322,10 @@ export const EchoAPI = {
     });
   },
 
-  async confirmStorePurchase(purchaseId: string, txSignature: string): Promise<AppState> {
+  async confirmStorePurchase(
+    purchaseId: string,
+    txSignature: string
+  ): Promise<AppState> {
     await fetchJson("/api/store/confirm", {
       method: "POST",
       body: JSON.stringify({
@@ -333,20 +339,27 @@ export const EchoAPI = {
   },
 
   async getSnapshotCSV(): Promise<string> {
-    const data = await fetchJson("/api/snapshot", { method: "POST" });
+    const data = await fetchJson("/api/snapshot", {
+      method: "POST",
+    });
     return String(data?.csv ?? "");
   },
 
   async activateAdBoost(): Promise<AppState> {
     try {
-      await fetchJson("/api/boost/activate", { method: "POST" });
+      await fetchJson("/api/boost/activate", {
+        method: "POST",
+      });
     } catch {
       // ignore
     }
     return await this.getState();
   },
 
-  async updateProfile(updates: { pfpUrl?: string; username?: string }): Promise<AppState> {
+  async updateProfile(updates: {
+    pfpUrl?: string;
+    username?: string;
+  }): Promise<AppState> {
     try {
       await fetchJson("/api/profile", {
         method: "PATCH",
