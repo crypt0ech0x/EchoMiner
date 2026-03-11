@@ -6,18 +6,17 @@ import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
 export const COOKIE_NAME = "echo_session";
-const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
+const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
 function newSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 
 function cookieDomain() {
-  const raw = process.env.COOKIE_DOMAIN?.trim();
-  return raw ? raw : undefined;
+  return undefined;
 }
 
-export function buildSessionCookieOptions(maxAgeSeconds?: number) {
+function buildSessionCookieOptions(maxAgeSeconds?: number) {
   return {
     httpOnly: true as const,
     secure: process.env.NODE_ENV === "production",
@@ -33,7 +32,6 @@ export async function createSessionForUser(
   opts?: { maxAgeSeconds?: number }
 ) {
   const maxAgeSeconds = opts?.maxAgeSeconds ?? DEFAULT_SESSION_TTL_SECONDS;
-
   const sessionId = newSessionId();
   const expiresAt = new Date(Date.now() + maxAgeSeconds * 1000);
 
@@ -68,13 +66,8 @@ export async function revokeSessionCookie() {
   if (sessionId) {
     try {
       await prisma.session.updateMany({
-        where: {
-          id: sessionId,
-          revokedAt: null,
-        },
-        data: {
-          revokedAt: new Date(),
-        },
+        where: { id: sessionId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
     } catch (err) {
       console.error("revokeSessionCookie session update failed:", err);
@@ -84,14 +77,12 @@ export async function revokeSessionCookie() {
   cookieStore.delete({
     name: COOKIE_NAME,
     path: "/",
-    ...(cookieDomain() ? { domain: cookieDomain() } : {}),
   });
 }
 
 export async function getUserFromSessionCookie() {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get(COOKIE_NAME)?.value;
-
   if (!sessionId) return null;
 
   try {
