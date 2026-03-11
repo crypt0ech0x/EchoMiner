@@ -7,18 +7,21 @@ import { getUserFromSessionCookie } from "@/lib/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const COOKIE_NAME = "echo_session";
+const SESSION_COOKIE_NAME = "echo_session";
+const TEST_COOKIE_NAME = "echo_cookie_test";
 
 export async function GET() {
   try {
     const cookieStore = await cookies();
-    const sessionId = cookieStore.get(COOKIE_NAME)?.value ?? null;
+
+    const sessionCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value ?? null;
+    const testCookie = cookieStore.get(TEST_COOKIE_NAME)?.value ?? null;
 
     let session = null;
-    if (sessionId) {
+    if (sessionCookie) {
       try {
         session = await prisma.session.findUnique({
-          where: { id: sessionId },
+          where: { id: sessionCookie },
           include: {
             user: {
               include: {
@@ -30,8 +33,9 @@ export async function GET() {
       } catch (err: any) {
         return NextResponse.json({
           ok: false,
-          cookiePresent: !!sessionId,
-          sessionId,
+          sessionCookiePresent: !!sessionCookie,
+          testCookiePresent: !!testCookie,
+          sessionId: sessionCookie,
           prismaError: err?.message ?? "Unknown Prisma error",
         });
       }
@@ -41,8 +45,10 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      cookiePresent: !!sessionId,
-      sessionId,
+      sessionCookiePresent: !!sessionCookie,
+      testCookiePresent: !!testCookie,
+      sessionId: sessionCookie,
+      testCookieValue: testCookie,
       sessionFound: !!session,
       sessionRevokedAt: session?.revokedAt?.toISOString?.() ?? null,
       sessionExpiresAt: session?.expiresAt?.toISOString?.() ?? null,
