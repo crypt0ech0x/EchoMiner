@@ -24,9 +24,9 @@ type Body = {
   walletAddress?: string;
 };
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    const sessionCheck = await requireMatchingWalletSession(null);
+    const sessionCheck = await requireMatchingWalletSession(req, null);
 
     if (isWalletSessionErr(sessionCheck)) {
       return NextResponse.json(
@@ -68,7 +68,11 @@ export async function POST(req: Request) {
     }
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
-    const sessionCheck = await requireMatchingWalletSession(requestedWalletAddress);
+
+    const sessionCheck = await requireMatchingWalletSession(
+      req,
+      requestedWalletAddress
+    );
 
     if (isWalletSessionErr(sessionCheck)) {
       return NextResponse.json(
@@ -166,7 +170,9 @@ export async function POST(req: Request) {
       },
       streak: {
         currentStreak: streakPlan.nextMultiplier,
-        graceEndsAt: streakPlan.graceEndsAt ? streakPlan.graceEndsAt.toISOString() : null,
+        graceEndsAt: streakPlan.graceEndsAt
+          ? streakPlan.graceEndsAt.toISOString()
+          : null,
       },
     });
   } catch (err) {
