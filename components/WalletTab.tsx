@@ -1,3 +1,4 @@
+// components/WalletTab.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -37,12 +38,6 @@ function explorerUrl(pubkey: string) {
   return `https://solscan.io/account/${pubkey}`;
 }
 
-function setSessionCookieClient(sessionId: string, maxAgeSeconds: number) {
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie =
-    `echo_session=${encodeURIComponent(sessionId)}; Path=/; Max-Age=${maxAgeSeconds}; SameSite=Lax${secure}`;
-}
-
 export default function WalletTab({
   totalMinedEcho = 0,
   verifiedWalletAddress = null,
@@ -77,20 +72,27 @@ export default function WalletTab({
       return;
     }
 
-    setIsVerified(false);
+    if (serverAddress && serverAddress !== address) {
+      setIsVerified(false);
+      return;
+    }
+
+    try {
+      const saved = localStorage.getItem(verifiedKey(address));
+      setIsVerified(saved === "1");
+    } catch {
+      setIsVerified(false);
+    }
   }, [connected, address, serverVerified, serverAddress]);
 
   useEffect(() => {
     if (!connected || !address) return;
-    if (serverVerified && serverAddress === address) return;
 
-    try {
-      const saved = localStorage.getItem(verifiedKey(address));
-      if (saved === "1") setIsVerified(true);
-    } catch {
-      // ignore
+    if (serverAddress && serverAddress !== address) {
+      EchoAPI.setSessionId(null);
+      setIsVerified(false);
     }
-  }, [connected, address, serverVerified, serverAddress]);
+  }, [connected, address, serverAddress]);
 
   useEffect(() => {
     if (!connected) {
@@ -120,6 +122,7 @@ export default function WalletTab({
     }
 
     loadBalance();
+
     return () => {
       cancelled = true;
     };
@@ -146,6 +149,12 @@ export default function WalletTab({
     }
 
     try {
+      EchoAPI.setSessionId(null);
+    } catch {
+      // ignore
+    }
+
+    try {
       if (address) localStorage.removeItem(verifiedKey(address));
       if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
     } catch {
@@ -161,6 +170,9 @@ export default function WalletTab({
     await fetch("/api/auth/logout", {
       method: "POST",
       credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
     }).catch(() => null);
 
     setIsVerified(false);
@@ -233,11 +245,11 @@ export default function WalletTab({
         throw new Error(verifyData?.error || "Verification failed.");
       }
 
-      if (!verifyData?.sessionId || !verifyData?.maxAgeSeconds) {
+      if (!verifyData?.sessionId) {
         throw new Error("Session was not created.");
       }
 
-      setSessionCookieClient(verifyData.sessionId, verifyData.maxAgeSeconds);
+      EchoAPI.setSessionId(verifyData.sessionId);
 
       try {
         localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
@@ -368,16 +380,18 @@ export default function WalletTab({
 
             <button
               onClick={handleVerifyWallet}
-              disabled={isVerifying || isVerified}
+              disabled={isVerifying || (isVerified && !serverMismatch)}
               className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:hover:bg-white flex items-center justify-center gap-2"
             >
-              {isVerified ? (
+              {isVerified && !serverMismatch ? (
                 <>
                   <CheckCircle2 className="w-5 h-5" />
                   Wallet Verified
                 </>
               ) : isVerifying ? (
                 "Signing Message..."
+              ) : serverMismatch ? (
+                "Verify Wallet to Switch"
               ) : (
                 "Verify Wallet (Signature)"
               )}
