@@ -3,7 +3,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { getUserFromRequest } from "@/lib/auth";
 
-type WalletSessionError = {
+type WalletSessionErr = {
   ok: false;
   status: number;
   error: string;
@@ -11,12 +11,12 @@ type WalletSessionError = {
   requestedWalletAddress?: string | null;
 };
 
-type WalletSessionSuccess = {
+type WalletSessionOk = {
   ok: true;
   user: {
     id: string;
     wallet?: {
-      address: string;
+      address: string | null;
       verified: boolean;
       verifiedAt: Date | null;
     } | null;
@@ -25,18 +25,18 @@ type WalletSessionSuccess = {
 };
 
 export function isWalletSessionErr(
-  result: WalletSessionError | WalletSessionSuccess
-): result is WalletSessionError {
-  return !result.ok;
+  value: WalletSessionErr | WalletSessionOk
+): value is WalletSessionErr {
+  return value.ok === false;
 }
 
 export async function requireMatchingWalletSession(
   req: Request,
   requestedWalletAddress?: string | null
-): Promise<WalletSessionError | WalletSessionSuccess> {
-  const user = await getUserFromRequest(req);
+): Promise<WalletSessionErr | WalletSessionOk> {
+  const authedUser = await getUserFromRequest(req);
 
-  if (!user) {
+  if (!authedUser) {
     return {
       ok: false,
       status: 401,
@@ -46,10 +46,7 @@ export async function requireMatchingWalletSession(
   }
 
   const wallet = await prisma.wallet.findFirst({
-    where: {
-      userId: user.id,
-      verified: true,
-    },
+    where: { userId: authedUser.id },
     select: {
       address: true,
       verified: true,
@@ -57,32 +54,43 @@ export async function requireMatchingWalletSession(
     },
   });
 
-  if (!wallet?.address) {
+  const serverWalletAddress = wallet?.address ?? null;
+
+  if (!wallet || !wallet.address || !wallet.verified) {
     return {
       ok: false,
       status: 401,
-      error: "No verified wallet on session",
+      error: "Wallet not verified",
+      serverWalletAddress,
       requestedWalletAddress: requestedWalletAddress ?? null,
     };
   }
 
-  const trimmedRequested = (requestedWalletAddress ?? "").trim();
-
-  if (trimmedRequested && trimmedRequested !== wallet.address) {
+  if (
+    requestedWalletAddress &&
+    requestedWalletAddress.trim() &&
+    requestedWalletAddress !== wallet.address
+  ) {
     return {
       ok: false,
       status: 409,
       error: "Wallet session mismatch",
-      serverWalletAddress: wallet.address,
-      requestedWalletAddress: trimmedRequested,
+      serverWalletAddress,
+      requestedWalletAddress,
     };
   }
 
   return {
     ok: true,
     user: {
-      id: user.id,
-      wallet,
+      id: authedUser.id,
+      wallet: wallet
+        ? {
+            address: wallet.address,
+            verified: wallet.verified,
+            verifiedAt: wallet.verifiedAt,
+          }
+        : null,
     },
     walletAddress: wallet.address,
   };
