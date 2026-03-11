@@ -2,10 +2,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
-  requireMatchingWalletSession,
-  isWalletSessionErr,
-} from "@/lib/server-wallet-auth";
-import {
   settleMiningSession,
   getNextSessionPlan,
   DEFAULT_BASE_RATE_PER_HR,
@@ -16,6 +12,7 @@ import {
   getEffectiveMultiplier,
   getLeaderboardMultiplier,
 } from "@/lib/economy";
+import { getUserFromRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,31 +21,109 @@ type Body = {
   walletAddress?: string;
 };
 
+async function resolveAuthedUser(req: Request, requestedWalletAddress?: string | null) {
+  // First try normal auth
+  const sessionUser = await getUserFromRequest(req);
+  if (sessionUser) {
+    const wallet = await prisma.wallet.findFirst({
+      where: { userId: sessionUser.id },
+      select: {
+        address: true,
+        verified: true,
+        verifiedAt: true,
+      },
+    });
+
+    if (wallet?.address && wallet.verified) {
+      if (
+        requestedWalletAddress &&
+        requestedWalletAddress.trim() &&
+        requestedWalletAddress !== wallet.address
+      ) {
+        return {
+          ok: false as const,
+          status: 409,
+          error: "Wallet session mismatch",
+          serverWalletAddress: wallet.address,
+          requestedWalletAddress,
+        };
+      }
+
+      return {
+        ok: true as const,
+        userId: sessionUser.id,
+        walletAddress: wallet.address,
+      };
+    }
+  }
+
+  // Temporary fallback: trust verified wallet address directly
+  if (!requestedWalletAddress || !requestedWalletAddress.trim()) {
+    return {
+      ok: false as const,
+      status: 401,
+      error: "Unauthorized",
+      serverWalletAddress: null,
+      requestedWalletAddress: requestedWalletAddress ?? null,
+    };
+  }
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { address: requestedWalletAddress },
+    select: {
+      userId: true,
+      address: true,
+      verified: true,
+    },
+  });
+
+  if (!wallet?.userId || !wallet.verified) {
+    return {
+      ok: false as const,
+      status: 401,
+      error: "Wallet not verified",
+      serverWalletAddress: wallet?.address ?? null,
+      requestedWalletAddress,
+    };
+  }
+
+  return {
+    ok: true as const,
+    userId: wallet.userId,
+    walletAddress: wallet.address,
+  };
+}
+
 export async function GET(req: Request) {
   try {
-    const sessionCheck = await requireMatchingWalletSession(req, null);
+    const sessionUser = await getUserFromRequest(req);
 
-    if (isWalletSessionErr(sessionCheck)) {
+    if (!sessionUser) {
       return NextResponse.json(
         {
           ok: false,
           method: "GET",
-          error: sessionCheck.error,
-          serverWalletAddress: sessionCheck.serverWalletAddress ?? null,
+          error: "Unauthorized",
+          serverWalletAddress: null,
         },
-        { status: sessionCheck.status }
+        { status: 401 }
       );
     }
 
+    const wallet = await prisma.wallet.findFirst({
+      where: { userId: sessionUser.id },
+      select: { address: true },
+    });
+
     const session = await prisma.miningSession.findUnique({
-      where: { userId: sessionCheck.user.id },
+      where: { userId: sessionUser.id },
     });
 
     return NextResponse.json({
       ok: true,
       method: "GET",
-      authedUserId: sessionCheck.user.id,
-      serverWalletAddress: sessionCheck.walletAddress,
+      authedUserId: sessionUser.id,
+      serverWalletAddress: wallet?.address ?? null,
       session,
       note: "Use POST to actually start a mining session.",
     });
@@ -69,26 +144,23 @@ export async function POST(req: Request) {
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
 
-    const sessionCheck = await requireMatchingWalletSession(
-      req,
-      requestedWalletAddress
-    );
+    const auth = await resolveAuthedUser(req, requestedWalletAddress);
 
-    if (isWalletSessionErr(sessionCheck)) {
+    if (!auth.ok) {
       return NextResponse.json(
         {
           ok: false,
-          error: sessionCheck.error,
-          serverWalletAddress: sessionCheck.serverWalletAddress ?? null,
-          requestedWalletAddress: sessionCheck.requestedWalletAddress ?? null,
+          error: auth.error,
+          serverWalletAddress: auth.serverWalletAddress ?? null,
+          requestedWalletAddress: auth.requestedWalletAddress ?? null,
         },
-        { status: sessionCheck.status }
+        { status: auth.status }
       );
     }
 
-    const authedUser = sessionCheck.user;
+    const userId = auth.userId;
 
-    const settled = await settleMiningSession(authedUser.id);
+    const settled = await settleMiningSession(userId);
 
     if (settled.isActive && settled.startedAt) {
       const endsAt = new Date(
@@ -107,17 +179,17 @@ export async function POST(req: Request) {
 
     const now = new Date();
     const endsAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
-    const streakPlan = await getNextSessionPlan(authedUser.id, now);
+    const streakPlan = await getNextSessionPlan(userId, now);
 
     const userMultipliers = await prisma.user.findUnique({
-      where: { id: authedUser.id },
+      where: { id: userId },
       select: {
         purchaseMultiplier: true,
         referralMultiplier: true,
       },
     });
 
-    const activeReward = await getActiveLeaderboardReward(authedUser.id, now);
+    const activeReward = await getActiveLeaderboardReward(userId, now);
 
     const streakMultiplier = streakPlan.nextMultiplier;
     const purchaseMultiplier = Number(userMultipliers?.purchaseMultiplier ?? 1);
@@ -136,7 +208,7 @@ export async function POST(req: Request) {
     const baseRatePerHr = DEFAULT_BASE_RATE_PER_HR;
 
     await prisma.miningSession.upsert({
-      where: { userId: authedUser.id },
+      where: { userId },
       update: {
         isActive: true,
         startedAt: now,
@@ -146,7 +218,7 @@ export async function POST(req: Request) {
         sessionMined: 0,
       },
       create: {
-        userId: authedUser.id,
+        userId,
         isActive: true,
         startedAt: now,
         lastAccruedAt: now,
@@ -174,6 +246,7 @@ export async function POST(req: Request) {
           ? streakPlan.graceEndsAt.toISOString()
           : null,
       },
+      walletAddress: auth.walletAddress,
     });
   } catch (err) {
     console.error("mining/start error:", err);
