@@ -1,7 +1,7 @@
 // app/api/state/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserFromSessionCookie } from "@/lib/auth";
+import { getUserFromRequest } from "@/lib/auth";
 import {
   settleMiningSession,
   getNextSessionPlan,
@@ -23,8 +23,6 @@ function shapeResponse(args: {
     totalPurchasedEcho: number;
     purchaseMultiplier: number;
     referralMultiplier: number;
-    riskScore: number;
-    referralCode: string | null;
   };
   session: {
     isActive: boolean;
@@ -55,8 +53,6 @@ function shapeResponse(args: {
       totalPurchasedEcho: Number(args.user.totalPurchasedEcho ?? 0),
       purchaseMultiplier: Number(args.user.purchaseMultiplier ?? 1),
       referralMultiplier: Number(args.user.referralMultiplier ?? 1),
-      riskScore: Number(args.user.riskScore ?? 0),
-      referralCode: args.user.referralCode ?? null,
     },
     session: {
       isActive: args.session?.isActive ?? false,
@@ -64,118 +60,4 @@ function shapeResponse(args: {
       lastAccruedAt: args.session?.lastAccruedAt
         ? args.session.lastAccruedAt.toISOString()
         : null,
-      baseRatePerHr: Number(args.session?.baseRatePerHr ?? 0),
-      multiplier: Number(args.session?.multiplier ?? 1),
-      sessionMined: Number(args.session?.sessionMined ?? 0),
-      endsAt: args.session?.endsAt ? args.session.endsAt.toISOString() : null,
-    },
-    streak: {
-      currentStreak: Number(args.streak.currentStreak ?? 0),
-      nextMultiplier: Number(args.streak.nextMultiplier ?? 1),
-      lastSessionEndAt: args.streak.lastSessionEndAt
-        ? args.streak.lastSessionEndAt.toISOString()
-        : null,
-      graceEndsAt: args.streak.graceEndsAt
-        ? args.streak.graceEndsAt.toISOString()
-        : null,
-    },
-  };
-}
-
-async function getState() {
-  const authedUser = await getUserFromSessionCookie();
-
-  if (!authedUser) {
-    return shapeResponse({
-      authed: false,
-      wallet: null,
-      user: {
-        totalMinedEcho: 0,
-        totalPurchasedEcho: 0,
-        purchaseMultiplier: 1,
-        referralMultiplier: 1,
-        riskScore: 0,
-        referralCode: null,
-      },
-      session: null,
-      streak: {
-        currentStreak: 0,
-        nextMultiplier: 1,
-        lastSessionEndAt: null,
-        graceEndsAt: null,
-      },
-    });
-  }
-
-  const settled = await settleMiningSession(authedUser.id);
-
-  const wallet = await prisma.wallet.findFirst({
-    where: { userId: authedUser.id },
-    select: {
-      address: true,
-      verified: true,
-      verifiedAt: true,
-    },
-  });
-
-  const userTotals = await prisma.user.findUnique({
-    where: { id: authedUser.id },
-    select: {
-      totalPurchasedEcho: true,
-      purchaseMultiplier: true,
-      referralMultiplier: true,
-      riskScore: true,
-      referralCode: true,
-    },
-  });
-
-  let streak;
-  if (settled.isActive) {
-    const activeStreak = Number(settled.multiplier ?? 1);
-    streak = {
-      currentStreak: activeStreak,
-      nextMultiplier: activeStreak + 1,
-      lastSessionEndAt: settled.endsAt,
-      graceEndsAt: settled.endsAt ? getGraceEndsAt(settled.endsAt) : null,
-    };
-  } else {
-    const plan = await getNextSessionPlan(authedUser.id);
-    streak = {
-      currentStreak: Number(plan.currentStreak ?? 0),
-      nextMultiplier: Number(plan.nextMultiplier ?? 1),
-      lastSessionEndAt: plan.lastSessionEndAt,
-      graceEndsAt: plan.graceEndsAt,
-    };
-  }
-
-  return shapeResponse({
-    authed: true,
-    wallet,
-    user: {
-      totalMinedEcho: settled.totalMinedEcho,
-      totalPurchasedEcho: Number(userTotals?.totalPurchasedEcho ?? 0),
-      purchaseMultiplier: Number(userTotals?.purchaseMultiplier ?? 1),
-      referralMultiplier: Number(userTotals?.referralMultiplier ?? 1),
-      riskScore: Number(userTotals?.riskScore ?? 0),
-      referralCode: userTotals?.referralCode ?? null,
-    },
-    session: {
-      isActive: settled.isActive,
-      startedAt: settled.startedAt,
-      lastAccruedAt: settled.lastAccruedAt,
-      baseRatePerHr: settled.baseRatePerHr,
-      multiplier: settled.multiplier,
-      sessionMined: settled.sessionMined,
-      endsAt: settled.endsAt,
-    },
-    streak,
-  });
-}
-
-export async function GET() {
-  return NextResponse.json(await getState());
-}
-
-export async function POST() {
-  return NextResponse.json(await getState());
-}
+      baseRatePerHr
