@@ -36,6 +36,7 @@ type ApiState = {
 
 const STORAGE_KEY = "echo_miner_state_v1";
 const CONNECTED_WALLET_KEY = "connected_wallet_address";
+const SESSION_ID_KEY = "echo_session_id";
 
 function safeJsonParse<T>(s: string | null): T | null {
   if (!s) return null;
@@ -50,6 +51,15 @@ function getConnectedWalletAddress(): string | null {
   if (typeof window === "undefined") return null;
   try {
     return sessionStorage.getItem(CONNECTED_WALLET_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function getSessionId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(SESSION_ID_KEY);
   } catch {
     return null;
   }
@@ -227,6 +237,8 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
 }
 
 async function fetchJson(url: string, init?: RequestInit) {
+  const sessionId = getSessionId();
+
   const res = await fetch(url, {
     method: init?.method ?? "GET",
     body: init?.body,
@@ -234,6 +246,7 @@ async function fetchJson(url: string, init?: RequestInit) {
     credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(sessionId ? { "x-session-id": sessionId } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -262,6 +275,7 @@ async function fetchJson(url: string, init?: RequestInit) {
 export const EchoAPI = {
   STORAGE_KEY,
   CONNECTED_WALLET_KEY,
+  SESSION_ID_KEY,
 
   setConnectedWalletAddress(address: string | null) {
     if (typeof window === "undefined") return;
@@ -274,6 +288,23 @@ export const EchoAPI = {
     } catch {
       // ignore
     }
+  },
+
+  setSessionId(sessionId: string | null) {
+    if (typeof window === "undefined") return;
+    try {
+      if (sessionId) {
+        localStorage.setItem(SESSION_ID_KEY, sessionId);
+      } else {
+        localStorage.removeItem(SESSION_ID_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  getSessionId() {
+    return getSessionId();
   },
 
   loadLocal(): AppState | null {
