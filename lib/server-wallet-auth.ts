@@ -1,73 +1,89 @@
 // lib/server-wallet-auth.ts
+import "server-only";
 import { prisma } from "@/lib/prisma";
-import { getUserFromSessionCookie } from "@/lib/auth";
+import { getUserFromRequest } from "@/lib/auth";
 
-export type WalletSessionOk = {
-  ok: true;
-  user: NonNullable<Awaited<ReturnType<typeof getUserFromSessionCookie>>>;
-  walletAddress: string;
-};
-
-export type WalletSessionErr = {
+type WalletSessionError = {
   ok: false;
-  status: 401 | 409;
+  status: number;
   error: string;
   serverWalletAddress?: string | null;
   requestedWalletAddress?: string | null;
 };
 
-export type WalletSessionCheck = WalletSessionOk | WalletSessionErr;
+type WalletSessionSuccess = {
+  ok: true;
+  user: {
+    id: string;
+    wallet?: {
+      address: string;
+      verified: boolean;
+      verifiedAt: Date | null;
+    } | null;
+  };
+  walletAddress: string;
+};
 
 export function isWalletSessionErr(
-  value: WalletSessionCheck
-): value is WalletSessionErr {
-  return value.ok === false;
+  result: WalletSessionError | WalletSessionSuccess
+): result is WalletSessionError {
+  return !result.ok;
 }
 
 export async function requireMatchingWalletSession(
+  req: Request,
   requestedWalletAddress?: string | null
-): Promise<WalletSessionCheck> {
-  const authedUser = await getUserFromSessionCookie();
+): Promise<WalletSessionError | WalletSessionSuccess> {
+  const user = await getUserFromRequest(req);
 
-  if (!authedUser) {
+  if (!user) {
     return {
       ok: false,
       status: 401,
-      error: "Not logged in",
+      error: "Unauthorized",
       requestedWalletAddress: requestedWalletAddress ?? null,
     };
   }
 
   const wallet = await prisma.wallet.findFirst({
-    where: { userId: authedUser.id },
-    select: { address: true, verified: true },
+    where: {
+      userId: user.id,
+      verified: true,
+    },
+    select: {
+      address: true,
+      verified: true,
+      verifiedAt: true,
+    },
   });
 
-  if (!wallet?.verified || !wallet.address) {
+  if (!wallet?.address) {
     return {
       ok: false,
       status: 401,
-      error: "Wallet not verified",
-      serverWalletAddress: wallet?.address ?? null,
+      error: "No verified wallet on session",
       requestedWalletAddress: requestedWalletAddress ?? null,
     };
   }
 
-  const requested = (requestedWalletAddress ?? "").trim();
+  const trimmedRequested = (requestedWalletAddress ?? "").trim();
 
-  if (requested && requested !== wallet.address) {
+  if (trimmedRequested && trimmedRequested !== wallet.address) {
     return {
       ok: false,
       status: 409,
       error: "Wallet session mismatch",
       serverWalletAddress: wallet.address,
-      requestedWalletAddress: requested,
+      requestedWalletAddress: trimmedRequested,
     };
   }
 
   return {
     ok: true,
-    user: authedUser,
+    user: {
+      id: user.id,
+      wallet,
+    },
     walletAddress: wallet.address,
   };
 }
