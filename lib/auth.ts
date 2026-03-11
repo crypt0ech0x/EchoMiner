@@ -5,24 +5,19 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
-const COOKIE_NAME = "echo_session";
+export const COOKIE_NAME = "echo_session";
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 function newSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-/**
- * Only use an explicit env var for cross-subdomain cookies.
- * Example:
- * COOKIE_DOMAIN=.echominer.fun
- */
 function cookieDomain() {
   const raw = process.env.COOKIE_DOMAIN?.trim();
   return raw ? raw : undefined;
 }
 
-function cookieOptions(maxAgeSeconds?: number) {
+export function buildSessionCookieOptions(maxAgeSeconds?: number) {
   return {
     httpOnly: true as const,
     secure: process.env.NODE_ENV === "production",
@@ -58,7 +53,11 @@ export function attachSessionCookie(
   sessionId: string,
   opts?: { maxAgeSeconds?: number }
 ) {
-  response.cookies.set(COOKIE_NAME, sessionId, cookieOptions(opts?.maxAgeSeconds));
+  response.cookies.set(
+    COOKIE_NAME,
+    sessionId,
+    buildSessionCookieOptions(opts?.maxAgeSeconds)
+  );
   return response;
 }
 
@@ -116,9 +115,4 @@ export async function getUserFromSessionCookie() {
     console.error("getUserFromSessionCookie failed:", err);
     return null;
   }
-}
-
-export async function getSessionIdFromCookie() {
-  const cookieStore = await cookies();
-  return cookieStore.get(COOKIE_NAME)?.value ?? null;
 }
