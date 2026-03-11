@@ -1,8 +1,10 @@
 // lib/auth.ts
 import "server-only";
+import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import crypto from "crypto";
 
+export const COOKIE_NAME = "echo_session";
 export const SESSION_HEADER_NAME = "x-session-id";
 const DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
@@ -30,15 +32,7 @@ export async function createSessionForUser(
   return { sessionId, expiresAt, maxAgeSeconds };
 }
 
-export function getSessionIdFromRequest(req: Request) {
-  const raw = req.headers.get(SESSION_HEADER_NAME)?.trim();
-  return raw || null;
-}
-
-export async function getSessionFromRequest(req: Request) {
-  const sessionId = getSessionIdFromRequest(req);
-  if (!sessionId) return null;
-
+async function getValidSessionById(sessionId: string) {
   try {
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
@@ -57,18 +51,49 @@ export async function getSessionFromRequest(req: Request) {
 
     return session;
   } catch (err) {
-    console.error("getSessionFromRequest failed:", err);
+    console.error("getValidSessionById failed:", err);
     return null;
   }
 }
 
-export async function getUserFromRequest(req: Request) {
-  const session = await getSessionFromRequest(req);
-  return session?.user ?? null;
+export async function getUserFromRequest(req?: Request) {
+  const headerSessionId = req?.headers.get(SESSION_HEADER_NAME)?.trim() || null;
+
+  if (headerSessionId) {
+    const session = await getValidSessionById(headerSessionId);
+    if (session) return session.user;
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const cookieSessionId = cookieStore.get(COOKIE_NAME)?.value ?? null;
+
+    if (!cookieSessionId) return null;
+
+    const session = await getValidSessionById(cookieSessionId);
+    return session?.user ?? null;
+  } catch (err) {
+    console.error("getUserFromRequest cookie fallback failed:", err);
+    return null;
+  }
 }
 
-export async function revokeSessionFromRequest(req: Request) {
-  const sessionId = getSessionIdFromRequest(req);
+export async function getUserFromSessionCookie() {
+  return getUserFromRequest();
+}
+
+export async function revokeSessionFromRequest(req?: Request) {
+  let sessionId = req?.headers.get(SESSION_HEADER_NAME)?.trim() || null;
+
+  if (!sessionId) {
+    try {
+      const cookieStore = await cookies();
+      sessionId = cookieStore.get(COOKIE_NAME)?.value ?? null;
+    } catch {
+      // ignore
+    }
+  }
+
   if (!sessionId) return;
 
   try {
