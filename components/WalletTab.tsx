@@ -203,11 +203,11 @@ export default function WalletTab({
       EchoAPI.setConnectedWalletAddress(currentAddress);
 
       const challengeRes = await fetch("/api/wallet/challenge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: currentAddress }),
-        credentials: "include",
-      });
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+});
 
       if (!challengeRes.ok) {
         const data = await challengeRes.json().catch(() => null);
@@ -226,16 +226,16 @@ export default function WalletTab({
       const signature = await signMessage(encoded);
 
       const verifyRes = await fetch("/api/wallet/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          publicKey: currentAddress,
-          nonce,
-          message,
-          signature: Array.from(signature),
-        }),
-        credentials: "include",
-      });
+  method: "POST",
+  credentials: "include",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    publicKey: publicKey.toBase58(),
+    nonce,
+    message,
+    signature: Array.from(signature),
+  }),
+});
 
       if (!verifyRes.ok) {
         const data = await verifyRes.json().catch(() => null);
