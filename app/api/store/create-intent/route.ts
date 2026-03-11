@@ -35,7 +35,10 @@ export async function POST(req: Request) {
       );
     }
 
-    const sessionCheck = await requireMatchingWalletSession(requestedWalletAddress);
+    const sessionCheck = await requireMatchingWalletSession(
+      req,
+      requestedWalletAddress
+    );
 
     if (isWalletSessionErr(sessionCheck)) {
       return NextResponse.json(
