@@ -1,7 +1,7 @@
 // app/api/wallet/verify/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { attachSessionCookie, createSessionForUser } from "@/lib/auth";
+import { createSessionForUser } from "@/lib/auth";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
 
@@ -105,14 +105,12 @@ export async function POST(req: Request) {
 
     const { sessionId, maxAgeSeconds } = await createSessionForUser(userId);
 
-    const response = NextResponse.json({
+    return NextResponse.json({
       ok: true,
       walletAddress,
+      sessionId,
+      maxAgeSeconds,
     });
-
-    attachSessionCookie(response, sessionId, { maxAgeSeconds });
-
-    return response;
   } catch (err) {
     console.error("wallet/verify error:", err);
     return NextResponse.json(
