@@ -333,15 +333,18 @@ export const EchoAPI = {
   },
 
   async startSession(): Promise<AppState> {
-  await fetchJson("/api/mining/start", {
-    method: "POST",
-    body: JSON.stringify({
-      walletAddress: getConnectedWalletAddress(),
-    }),
-  });
+    const walletAddress = getConnectedWalletAddress();
+    console.log("EchoAPI.startSession walletAddress:", walletAddress);
 
-  return await this.getState();
-},
+    await fetchJson("/api/mining/start", {
+      method: "POST",
+      body: JSON.stringify({
+        walletAddress,
+      }),
+    });
+
+    return await this.getState();
+  },
 
   async createStoreIntent(packageId: string) {
     return await fetchJson("/api/store/create-intent", {
