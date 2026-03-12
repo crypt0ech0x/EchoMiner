@@ -17,6 +17,8 @@ export default function EchoMinerApp() {
 
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [isStartingSession, setIsStartingSession] = useState(false);
 
   const [activeTab, setActiveTab] = useState<Tab>(Tab.MINE);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
@@ -40,8 +42,10 @@ export default function EchoMinerApp() {
           "connected_wallet_address",
           publicKey.toBase58()
         );
+        EchoAPI.setConnectedWalletAddress(publicKey.toBase58());
       } else {
         sessionStorage.removeItem("connected_wallet_address");
+        EchoAPI.setConnectedWalletAddress(null);
       }
     } catch {
       // ignore
@@ -99,7 +103,6 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
-  // Full session value for the center mining display
   const sessionEarnings = useMemo(() => {
     if (!state?.session?.isActive) return 0;
 
@@ -115,9 +118,6 @@ export default function EchoMinerApp() {
     return base + deltaSec * effectiveRatePerSec;
   }, [state, now, effectiveRatePerSec]);
 
-  // Correct top balance card total:
-  // settled total already includes accrual up to lastAccruedAt,
-  // so only add the unsmoothed delta since then.
   const balanceCardTotal = useMemo(() => {
     const settledTotal = Number(state?.user?.totalMined ?? 0);
 
@@ -140,6 +140,81 @@ export default function EchoMinerApp() {
     if (!base || base <= 0) return 1;
     return eff / base;
   }, [state]);
+
+  const handleStartSession = async () => {
+    if (walletMismatch) {
+      setSessionError("Connected wallet does not match the verified wallet.");
+      setActiveTab(Tab.WALLET);
+      return;
+    }
+
+    try {
+      setSessionError(null);
+      setIsStartingSession(true);
+
+      const updated = await EchoAPI.startSession();
+      setState(updated);
+    } catch (e: any) {
+      console.error("start session failed:", e);
+
+      const message =
+        e?.data?.error ||
+        e?.message ||
+        "Failed to start session";
+
+      setSessionError(message);
+
+      if (e?.status === 409 && e?.data?.error === "Wallet session mismatch") {
+        try {
+          localStorage.removeItem(EchoAPI.STORAGE_KEY);
+        } catch {
+          // ignore
+        }
+
+        try {
+          EchoAPI.setSessionId(null);
+        } catch {
+          // ignore
+        }
+
+        try {
+          await fetch("/api/auth/logout", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+        } catch {
+          // ignore
+        }
+
+        const fresh = await EchoAPI.getState().catch(() => null);
+        if (fresh) setState(fresh);
+
+        setActiveTab(Tab.WALLET);
+        alert(message);
+        return;
+      }
+
+      if (e?.status === 401) {
+        setActiveTab(Tab.WALLET);
+        alert(message);
+        return;
+      }
+
+      try {
+        const fresh = await EchoAPI.getState();
+        setState(fresh);
+      } catch {
+        // ignore
+      }
+
+      alert(message);
+    } finally {
+      setIsStartingSession(false);
+    }
+  };
 
   if (loadError) {
     return (
@@ -193,65 +268,30 @@ export default function EchoMinerApp() {
         state={state}
       >
         {activeTab === Tab.MINE && (
-          <MineTab
-            state={state}
-            sessionEarnings={sessionEarnings}
-            balanceCardTotal={balanceCardTotal}
-            effectiveRate={effectiveRatePerSec}
-            totalMultiplier={totalMultiplier}
-            currentTime={now}
-            onOpenBoosts={() => setActiveTab(Tab.BOOST)}
-            onStartSession={async () => {
-              if (walletMismatch) {
-                setActiveTab(Tab.WALLET);
-                return;
-              }
+          <>
+            {sessionError && (
+              <div className="mx-5 mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-3 text-sm font-bold text-red-200">
+                {sessionError}
+              </div>
+            )}
 
-              try {
-                const updated = await EchoAPI.startSession();
-                setState(updated);
-              } catch (e: any) {
-                if (
-                  e?.status === 409 &&
-                  e?.data?.error === "Wallet session mismatch"
-                ) {
-                  try {
-                    localStorage.removeItem(EchoAPI.STORAGE_KEY);
-                  } catch {
-                    // ignore
-                  }
+            <MineTab
+              state={state}
+              sessionEarnings={sessionEarnings}
+              balanceCardTotal={balanceCardTotal}
+              effectiveRate={effectiveRatePerSec}
+              totalMultiplier={totalMultiplier}
+              currentTime={now}
+              onOpenBoosts={() => setActiveTab(Tab.BOOST)}
+              onStartSession={handleStartSession}
+            />
 
-                  try {
-                    await fetch("/api/auth/logout", {
-                      method: "POST",
-                      credentials: "include",
-                    });
-                  } catch {
-                    // ignore
-                  }
-
-                  const fresh = await EchoAPI.getState().catch(() => null);
-                  if (fresh) setState(fresh);
-                  setActiveTab(Tab.WALLET);
-                  return;
-                }
-
-                if (e?.status === 401) {
-                  setActiveTab(Tab.WALLET);
-                  return;
-                }
-
-                try {
-                  const fresh = await EchoAPI.getState();
-                  setState(fresh);
-                } catch {
-                  // ignore
-                }
-
-                console.error("start session failed:", e);
-              }
-            }}
-          />
+            {isStartingSession && (
+              <div className="mx-5 mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm font-bold text-white/70">
+                Starting session...
+              </div>
+            )}
+          </>
         )}
 
         {activeTab === Tab.BOOST && (
@@ -281,6 +321,8 @@ export default function EchoMinerApp() {
               verifiedAt: state.wallet?.verifiedAt ?? null,
             }}
             onVerified={async () => {
+              setSessionError(null);
+
               const fresh = await EchoAPI.getState();
               setState(fresh);
 
