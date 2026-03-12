@@ -14,21 +14,21 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
-    const publicKey = body.publicKey;
-    const nonce = body.nonce;
-    const message = body.message;
+    const publicKey = String(body.publicKey ?? "").trim();
+    const nonce = String(body.nonce ?? "").trim();
+    const message = String(body.message ?? "");
     const signature = body.signature;
 
-    if (!publicKey || !nonce || !message || !signature) {
+    if (!publicKey || !nonce || !message || !Array.isArray(signature)) {
       return NextResponse.json(
         { error: "Invalid verification payload" },
         { status: 400 }
       );
     }
 
-    // find nonce
-    const storedNonce = await prisma.walletNonce.findUnique({
+    const storedNonce = await prisma.walletNonce.findFirst({
       where: { nonce },
+      orderBy: { createdAt: "desc" },
     });
 
     if (!storedNonce) {
@@ -62,12 +62,13 @@ export async function POST(req: Request) {
       );
     }
 
-    // delete nonce
-    await prisma.walletNonce.delete({
-      where: { nonce },
+    await prisma.walletNonce.deleteMany({
+      where: {
+        walletAddress: publicKey,
+        nonce,
+      },
     });
 
-    // find or create user
     let wallet = await prisma.wallet.findUnique({
       where: { address: publicKey },
       include: { user: true },
@@ -100,7 +101,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // create session
     const sessionId = crypto.randomUUID();
 
     await prisma.session.create({
