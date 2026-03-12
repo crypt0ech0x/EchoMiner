@@ -28,12 +28,6 @@ type Props = {
   onVerified?: () => void | Promise<void>;
 };
 
-const APP_STATE_KEY = "echo_miner_state_v1";
-
-function verifiedKey(address: string) {
-  return `echo:walletVerified:${address}`;
-}
-
 function explorerUrl(pubkey: string) {
   return `https://solscan.io/account/${pubkey}`;
 }
@@ -49,180 +43,97 @@ export default function WalletTab({
 
   const [solBalance, setSolBalance] = useState<number | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [isVerified, setIsVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const address = useMemo(() => publicKey?.toBase58() ?? "", [publicKey]);
 
   const serverAddress = walletFromServer?.address ?? verifiedWalletAddress ?? null;
   const serverVerified =
-    walletFromServer?.verified ?? (verifiedWalletAddress ? true : false);
+    walletFromServer?.verified ?? Boolean(verifiedWalletAddress);
 
-  const serverMismatch =
-    !!address && !!serverAddress && serverAddress !== address;
-
-  useEffect(() => {
-    if (!connected || !address) {
-      setIsVerified(false);
-      return;
-    }
-
-    if (serverVerified && serverAddress === address) {
-      setIsVerified(true);
-      return;
-    }
-
-    if (serverAddress && serverAddress !== address) {
-      setIsVerified(false);
-      return;
-    }
-
-    try {
-      const saved = localStorage.getItem(verifiedKey(address));
-      setIsVerified(saved === "1");
-    } catch {
-      setIsVerified(false);
-    }
-  }, [connected, address, serverVerified, serverAddress]);
+  const walletLinked = connected && !!address;
+  const exactServerMatch = !!address && !!serverAddress && address === serverAddress;
+  const walletIsVerified = walletLinked && exactServerMatch && serverVerified;
+  const walletMismatch = !!address && !!serverAddress && address !== serverAddress;
 
   useEffect(() => {
-    if (!connected || !address) return;
-
-    if (serverAddress && serverAddress !== address) {
-      EchoAPI.setSessionId(null);
-      setIsVerified(false);
-    }
-  }, [connected, address, serverAddress]);
-
-  useEffect(() => {
-    if (!connected) {
-      setIsVerified(false);
+    if (!publicKey) {
       setSolBalance(null);
-      setError(null);
+      return;
     }
-  }, [connected]);
 
-  useEffect(() => {
     let cancelled = false;
 
-    async function loadBalance() {
-      if (!publicKey) {
-        setSolBalance(null);
-        return;
-      }
-
+    (async () => {
       try {
-        const lamports = await connection.getBalance(publicKey, {
-          commitment: "confirmed",
-        });
-        if (!cancelled) setSolBalance(lamports / LAMPORTS_PER_SOL);
+        const lamports = await connection.getBalance(publicKey, "confirmed");
+        if (!cancelled) {
+          setSolBalance(lamports / LAMPORTS_PER_SOL);
+        }
       } catch {
         if (!cancelled) setSolBalance(null);
       }
-    }
-
-    loadBalance();
+    })();
 
     return () => {
       cancelled = true;
     };
   }, [connection, publicKey]);
 
+  useEffect(() => {
+    if (walletLinked && address) {
+      EchoAPI.setConnectedWalletAddress(address);
+    } else {
+      EchoAPI.setConnectedWalletAddress(null);
+    }
+  }, [walletLinked, address]);
+
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-    }
-  }
-
-  async function clearLocalWalletState() {
-    try {
-      localStorage.removeItem(APP_STATE_KEY);
-    } catch {
       // ignore
-    }
-
-    try {
-      EchoAPI.setSessionId(null);
-    } catch {
-      // ignore
-    }
-
-    try {
-      if (address) localStorage.removeItem(verifiedKey(address));
-      if (serverAddress) localStorage.removeItem(verifiedKey(serverAddress));
-    } catch {
-      // ignore
-    }
-  }
-
-  async function logoutOldServerSessionIfNeeded() {
-    if (!serverMismatch) return;
-
-    await clearLocalWalletState();
-
-    await fetch("/api/auth/logout", {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }).catch(() => null);
-
-    setIsVerified(false);
-
-    if (onVerified) {
-      await onVerified();
     }
   }
 
   async function handleVerifyWallet() {
     setError(null);
 
-    if (!connected || !publicKey) {
+    if (!walletLinked || !publicKey) {
       setError("Connect your wallet first.");
       return;
     }
 
     if (!signMessage) {
-      setError("This wallet does not support message signing. Try Phantom or Solflare.");
+      setError("This wallet does not support message signing.");
       return;
     }
 
     try {
       setIsVerifying(true);
 
-      if (serverMismatch) {
-        await logoutOldServerSessionIfNeeded();
-      }
-
-      EchoAPI.setConnectedWalletAddress(publicKey.toBase58());
-
       const challengeRes = await fetch("/api/wallet/challenge", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+        body: JSON.stringify({
+          walletAddress: publicKey.toBase58(),
+        }),
       });
 
-      if (!challengeRes.ok) {
-        const data = await challengeRes.json().catch(() => null);
-        throw new Error(data?.error || "Could not start verification. Try again.");
+      const challengeData = await challengeRes.json().catch(() => null);
+
+      if (!challengeRes.ok || !challengeData?.nonce) {
+        throw new Error(challengeData?.error || "Failed to create challenge.");
       }
 
-      const { nonce } = (await challengeRes.json()) as { nonce: string };
+      const nonce = challengeData.nonce;
 
       const message =
         "ECHO Wallet Verification\n" +
         `Wallet: ${publicKey.toBase58()}\n` +
-        `Nonce: ${nonce}\n` +
-        "\nBy signing this message, you verify ownership for ECHO eligibility.";
+        `Nonce: ${nonce}\n\n` +
+        "Sign this message to verify your wallet.";
 
       const encoded = new TextEncoder().encode(message);
       const signature = await signMessage(encoded);
@@ -245,19 +156,9 @@ export default function WalletTab({
         throw new Error(verifyData?.error || "Verification failed.");
       }
 
-      if (!verifyData?.sessionId) {
-        throw new Error("Session was not created.");
+      if (verifyData?.sessionId) {
+        EchoAPI.setSessionId(verifyData.sessionId);
       }
-
-      EchoAPI.setSessionId(verifyData.sessionId);
-
-      try {
-        localStorage.setItem(verifiedKey(publicKey.toBase58()), "1");
-      } catch {
-        // ignore
-      }
-
-      setIsVerified(true);
 
       if (onVerified) {
         await onVerified();
@@ -269,8 +170,6 @@ export default function WalletTab({
     }
   }
 
-  const walletLinked = connected;
-
   return (
     <div className="px-6 py-6 space-y-6">
       <div className="flex items-center gap-3">
@@ -280,7 +179,7 @@ export default function WalletTab({
         <div>
           <h2 className="text-lg font-black text-white tracking-tight">Wallet</h2>
           <p className="text-xs text-white/40 font-bold">
-            Secure your ECHO for the mainnet airdrop.
+            Verify your wallet before starting a mining session.
           </p>
         </div>
       </div>
@@ -297,7 +196,7 @@ export default function WalletTab({
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                {isVerified ? (
+                {walletIsVerified ? (
                   <div className="flex items-center gap-2 text-teal-400">
                     <ShieldCheck className="w-4 h-4" />
                     <span className="text-xs font-black uppercase tracking-widest">
@@ -308,7 +207,7 @@ export default function WalletTab({
                   <div className="flex items-center gap-2 text-orange-400">
                     <ShieldAlert className="w-4 h-4" />
                     <span className="text-xs font-black uppercase tracking-widest">
-                      Unverified
+                      Verification Required
                     </span>
                   </div>
                 )}
@@ -334,16 +233,16 @@ export default function WalletTab({
               </button>
             </div>
 
-            {serverMismatch && (
+            {walletMismatch && (
               <div className="rounded-2xl border border-orange-500/20 bg-orange-500/5 p-4">
                 <div className="text-[11px] font-black text-orange-300 uppercase tracking-widest mb-2">
-                  Connected wallet differs from server login
+                  Connected wallet differs from verified wallet
                 </div>
                 <div className="text-xs text-white/50 font-bold break-all mb-2">
-                  Server wallet: {serverAddress}
+                  Verified wallet: {serverAddress}
                 </div>
                 <div className="text-xs text-white/40">
-                  Press Verify Wallet and the app will switch the login automatically.
+                  Press Verify Wallet to switch your login to this connected wallet.
                 </div>
               </div>
             )}
@@ -363,7 +262,7 @@ export default function WalletTab({
                   Airdrop Readiness
                 </div>
                 <div className="text-lg font-black text-white tabular-nums">
-                  {isVerified ? "100%" : "-"}
+                  {walletIsVerified ? "100%" : "Verify"}
                 </div>
               </div>
             </div>
@@ -380,17 +279,17 @@ export default function WalletTab({
 
             <button
               onClick={handleVerifyWallet}
-              disabled={isVerifying || (isVerified && !serverMismatch)}
+              disabled={isVerifying}
               className="w-full h-14 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:hover:bg-white flex items-center justify-center gap-2"
             >
-              {isVerified && !serverMismatch ? (
+              {isVerifying ? (
+                "Signing Message..."
+              ) : walletIsVerified ? (
                 <>
                   <CheckCircle2 className="w-5 h-5" />
                   Wallet Verified
                 </>
-              ) : isVerifying ? (
-                "Signing Message..."
-              ) : serverMismatch ? (
+              ) : walletMismatch ? (
                 "Verify Wallet to Switch"
               ) : (
                 "Verify Wallet (Signature)"
