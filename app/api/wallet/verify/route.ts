@@ -49,11 +49,7 @@ export async function POST(req: Request) {
     const sig = new Uint8Array(signature);
     const pubKey = bs58.decode(publicKey);
 
-    const verified = nacl.sign.detached.verify(
-      encodedMessage,
-      sig,
-      pubKey
-    );
+    const verified = nacl.sign.detached.verify(encodedMessage, sig, pubKey);
 
     if (!verified) {
       return NextResponse.json(
@@ -69,28 +65,36 @@ export async function POST(req: Request) {
       },
     });
 
-    let wallet = await prisma.wallet.findUnique({
+    const existingWallet = await prisma.wallet.findUnique({
       where: { address: publicKey },
       include: { user: true },
     });
 
-    let user;
+    let userId: string;
 
-    if (!wallet) {
-      user = await prisma.user.create({
+    if (!existingWallet?.userId) {
+      const user = await prisma.user.create({
         data: {},
       });
 
-      wallet = await prisma.wallet.create({
-        data: {
+      userId = user.id;
+
+      await prisma.wallet.upsert({
+        where: { address: publicKey },
+        update: {
+          userId,
+          verified: true,
+          verifiedAt: new Date(),
+        },
+        create: {
           address: publicKey,
-          userId: user.id,
+          userId,
           verified: true,
           verifiedAt: new Date(),
         },
       });
     } else {
-      user = wallet.user;
+      userId = existingWallet.userId;
 
       await prisma.wallet.update({
         where: { address: publicKey },
@@ -106,7 +110,7 @@ export async function POST(req: Request) {
     await prisma.session.create({
       data: {
         id: sessionId,
-        userId: user.id,
+        userId,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
@@ -123,6 +127,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       sessionId,
+      walletAddress: publicKey,
     });
   } catch (err: any) {
     console.error("wallet verify error:", err);
