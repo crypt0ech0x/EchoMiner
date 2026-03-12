@@ -22,8 +22,8 @@ type Body = {
 };
 
 async function resolveAuthedUser(req: Request, requestedWalletAddress?: string | null) {
-  // First try normal auth
   const sessionUser = await getUserFromRequest(req);
+
   if (sessionUser) {
     const wallet = await prisma.wallet.findFirst({
       where: { userId: sessionUser.id },
@@ -57,7 +57,6 @@ async function resolveAuthedUser(req: Request, requestedWalletAddress?: string |
     }
   }
 
-  // Temporary fallback: trust verified wallet address directly
   if (!requestedWalletAddress || !requestedWalletAddress.trim()) {
     return {
       ok: false as const,
@@ -143,7 +142,6 @@ export async function POST(req: Request) {
     }
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
-
     const auth = await resolveAuthedUser(req, requestedWalletAddress);
 
     if (!auth.ok) {
