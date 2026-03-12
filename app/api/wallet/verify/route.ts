@@ -1,117 +1,136 @@
 // app/api/wallet/verify/route.ts
+
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { createSessionForUser } from "@/lib/auth";
-import bs58 from "bs58";
 import nacl from "tweetnacl";
+import bs58 from "bs58";
+import crypto from "crypto";
+import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type Body = {
-  publicKey: string;
-  nonce: string;
-  message: string;
-  signature: number[];
-};
-
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as Body;
+    const body = await req.json();
 
-    const walletAddress = (body.publicKey || "").trim();
-    const nonce = (body.nonce || "").trim();
-    const message = body.message || "";
-    const signatureArr = body.signature;
+    const publicKey = body.publicKey;
+    const nonce = body.nonce;
+    const message = body.message;
+    const signature = body.signature;
 
-    if (!walletAddress || !nonce || !message || !Array.isArray(signatureArr)) {
+    if (!publicKey || !nonce || !message || !signature) {
       return NextResponse.json(
-        { ok: false, error: "Missing fields" },
+        { error: "Invalid verification payload" },
         { status: 400 }
       );
     }
 
-    const nonceRow = await prisma.walletNonce.findFirst({
-      where: { walletAddress, nonce },
+    // find nonce
+    const storedNonce = await prisma.walletNonce.findUnique({
+      where: { nonce },
     });
 
-    if (!nonceRow) {
+    if (!storedNonce) {
       return NextResponse.json(
-        { ok: false, error: "Invalid or expired nonce. Please try again." },
-        { status: 401 }
-      );
-    }
-
-    if (!message.includes(walletAddress) || !message.includes(nonce)) {
-      return NextResponse.json(
-        { ok: false, error: "Message mismatch" },
+        { error: "Nonce not found or expired" },
         { status: 400 }
       );
     }
 
-    const publicKeyBytes = bs58.decode(walletAddress);
-    const signatureBytes = Uint8Array.from(signatureArr);
-    const messageBytes = new TextEncoder().encode(message);
+    if (storedNonce.walletAddress !== publicKey) {
+      return NextResponse.json(
+        { error: "Wallet mismatch for nonce" },
+        { status: 400 }
+      );
+    }
 
-    const ok = nacl.sign.detached.verify(
-      messageBytes,
-      signatureBytes,
-      publicKeyBytes
+    const encodedMessage = new TextEncoder().encode(message);
+    const sig = new Uint8Array(signature);
+    const pubKey = bs58.decode(publicKey);
+
+    const verified = nacl.sign.detached.verify(
+      encodedMessage,
+      sig,
+      pubKey
     );
 
-    if (!ok) {
+    if (!verified) {
       return NextResponse.json(
-        { ok: false, error: "Invalid signature" },
+        { error: "Signature verification failed" },
         { status: 401 }
       );
     }
 
-    await prisma.walletNonce.deleteMany({
-      where: { walletAddress },
+    // delete nonce
+    await prisma.walletNonce.delete({
+      where: { nonce },
     });
 
+    // find or create user
     let wallet = await prisma.wallet.findUnique({
-      where: { address: walletAddress },
+      where: { address: publicKey },
+      include: { user: true },
     });
 
-    let userId: string;
+    let user;
 
-    if (wallet?.userId) {
-      userId = wallet.userId;
+    if (!wallet) {
+      user = await prisma.user.create({
+        data: {},
+      });
+
+      wallet = await prisma.wallet.create({
+        data: {
+          address: publicKey,
+          userId: user.id,
+          verified: true,
+          verifiedAt: new Date(),
+        },
+      });
     } else {
-      const user = await prisma.user.create({ data: {} });
-      userId = user.id;
+      user = wallet.user;
 
-      wallet = await prisma.wallet.upsert({
-        where: { address: walletAddress },
-        update: { userId },
-        create: {
-          address: walletAddress,
-          userId,
+      await prisma.wallet.update({
+        where: { address: publicKey },
+        data: {
+          verified: true,
+          verifiedAt: new Date(),
         },
       });
     }
 
-    await prisma.wallet.update({
-      where: { address: walletAddress },
+    // create session
+    const sessionId = crypto.randomUUID();
+
+    await prisma.session.create({
       data: {
-        verified: true,
-        verifiedAt: new Date(),
+        id: sessionId,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       },
     });
 
-    const { sessionId, maxAgeSeconds } = await createSessionForUser(userId);
+    const cookieStore = await cookies();
+
+    cookieStore.set("echo_session", sessionId, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: true,
+      path: "/",
+    });
 
     return NextResponse.json({
       ok: true,
-      walletAddress,
       sessionId,
-      maxAgeSeconds,
     });
-  } catch (err) {
-    console.error("wallet/verify error:", err);
+  } catch (err: any) {
+    console.error("wallet verify error:", err);
+
     return NextResponse.json(
-      { ok: false, error: "Verify failed" },
+      {
+        error: err?.message || "Wallet verification failed",
+      },
       { status: 500 }
     );
   }
