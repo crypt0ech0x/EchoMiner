@@ -21,7 +21,10 @@ type Body = {
   walletAddress?: string;
 };
 
-async function resolveAuthedUser(req: Request, requestedWalletAddress?: string | null) {
+async function resolveAuthedUser(
+  req: Request,
+  requestedWalletAddress?: string | null
+) {
   const sessionUser = await getUserFromRequest(req);
 
   if (sessionUser) {
@@ -93,45 +96,6 @@ async function resolveAuthedUser(req: Request, requestedWalletAddress?: string |
   };
 }
 
-export async function GET(req: Request) {
-  try {
-    const sessionUser = await getUserFromRequest(req);
-
-    if (!sessionUser) {
-      return NextResponse.json(
-        {
-          ok: false,
-          method: "GET",
-          error: "Unauthorized",
-          serverWalletAddress: null,
-        },
-        { status: 401 }
-      );
-    }
-
-    const wallet = await prisma.wallet.findFirst({
-      where: { userId: sessionUser.id },
-      select: { address: true },
-    });
-
-    const session = await prisma.miningSession.findUnique({
-      where: { userId: sessionUser.id },
-    });
-
-    return NextResponse.json({
-      ok: true,
-      method: "GET",
-      authedUserId: sessionUser.id,
-      serverWalletAddress: wallet?.address ?? null,
-      session,
-      note: "Use POST to actually start a mining session.",
-    });
-  } catch (err) {
-    console.error("mining/start GET error:", err);
-    return NextResponse.json({ ok: false, error: "Debug failed" }, { status: 500 });
-  }
-}
-
 export async function POST(req: Request) {
   try {
     let body: Body = {};
@@ -142,6 +106,7 @@ export async function POST(req: Request) {
     }
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
+
     const auth = await resolveAuthedUser(req, requestedWalletAddress);
 
     if (!auth.ok) {
@@ -189,7 +154,7 @@ export async function POST(req: Request) {
 
     const activeReward = await getActiveLeaderboardReward(userId, now);
 
-    const streakMultiplier = streakPlan.nextMultiplier;
+    const streakMultiplier = Number(streakPlan.nextMultiplier ?? 1);
     const purchaseMultiplier = Number(userMultipliers?.purchaseMultiplier ?? 1);
     const referralMultiplier = Number(userMultipliers?.referralMultiplier ?? 1);
     const leaderboardMultiplier = getLeaderboardMultiplier(activeReward);
@@ -246,8 +211,16 @@ export async function POST(req: Request) {
       },
       walletAddress: auth.walletAddress,
     });
-  } catch (err) {
-    console.error("mining/start error:", err);
-    return NextResponse.json({ ok: false, error: "Start failed" }, { status: 500 });
+  } catch (err: any) {
+    console.error("mining/start error full:", err);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: err?.message || "Start failed",
+        details: err?.stack || null,
+      },
+      { status: 500 }
+    );
   }
 }
