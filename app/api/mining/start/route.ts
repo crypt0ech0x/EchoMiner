@@ -7,11 +7,7 @@ import {
   DEFAULT_BASE_RATE_PER_HR,
   SESSION_DURATION_SECONDS,
 } from "@/lib/mining";
-import { getActiveLeaderboardReward } from "@/lib/leaderboard";
-import {
-  getEffectiveMultiplier,
-  getLeaderboardMultiplier,
-} from "@/lib/economy";
+import { getEffectiveMultiplier } from "@/lib/economy";
 import { getUserFromRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -106,7 +102,6 @@ export async function POST(req: Request) {
     }
 
     const requestedWalletAddress = (body.walletAddress ?? "").trim();
-
     const auth = await resolveAuthedUser(req, requestedWalletAddress);
 
     if (!auth.ok) {
@@ -152,12 +147,10 @@ export async function POST(req: Request) {
       },
     });
 
-    const activeReward = await getActiveLeaderboardReward(userId, now);
-
     const streakMultiplier = Number(streakPlan.nextMultiplier ?? 1);
     const purchaseMultiplier = Number(userMultipliers?.purchaseMultiplier ?? 1);
     const referralMultiplier = Number(userMultipliers?.referralMultiplier ?? 1);
-    const leaderboardMultiplier = getLeaderboardMultiplier(activeReward);
+    const leaderboardMultiplier = 1;
     const boostMultiplier = 1;
 
     const multiplier = getEffectiveMultiplier({
@@ -218,7 +211,6 @@ export async function POST(req: Request) {
       {
         ok: false,
         error: err?.message || "Start failed",
-        details: err?.stack || null,
       },
       { status: 500 }
     );
