@@ -27,11 +27,14 @@ function shapeResponse(args: {
   session: {
     isActive: boolean;
     startedAt: Date | null;
-    lastAccruedAt: Date | null;
-    baseRatePerHr: number;
-    multiplier: number;
-    sessionMined: number;
     endsAt: Date | null;
+    baseDailyEcho: number;
+    currentMultiplier: number;
+    currentRatePerSec: number;
+    earnedEchoSnapshot: number;
+    lastRateChangeAt: Date | null;
+    projectedTotalEcho: number;
+    sessionMined: number;
   } | null;
   streak: {
     currentStreak: number;
@@ -61,13 +64,16 @@ function shapeResponse(args: {
       startedAt: args.session?.startedAt
         ? args.session.startedAt.toISOString()
         : null,
-      lastAccruedAt: args.session?.lastAccruedAt
-        ? args.session.lastAccruedAt.toISOString()
-        : null,
-      baseRatePerHr: Number(args.session?.baseRatePerHr ?? 0),
-      multiplier: Number(args.session?.multiplier ?? 1),
-      sessionMined: Number(args.session?.sessionMined ?? 0),
       endsAt: args.session?.endsAt ? args.session.endsAt.toISOString() : null,
+      baseDailyEcho: Number(args.session?.baseDailyEcho ?? 0),
+      currentMultiplier: Number(args.session?.currentMultiplier ?? 1),
+      currentRatePerSec: Number(args.session?.currentRatePerSec ?? 0),
+      earnedEchoSnapshot: Number(args.session?.earnedEchoSnapshot ?? 0),
+      lastRateChangeAt: args.session?.lastRateChangeAt
+        ? args.session.lastRateChangeAt.toISOString()
+        : null,
+      projectedTotalEcho: Number(args.session?.projectedTotalEcho ?? 0),
+      sessionMined: Number(args.session?.sessionMined ?? 0),
     },
     streak: {
       currentStreak: Number(args.streak.currentStreak ?? 0),
@@ -127,7 +133,7 @@ async function getState(req: Request) {
 
   let streak;
   if (settled.isActive) {
-    const activeStreak = Number(settled.multiplier ?? 1);
+    const activeStreak = Number(settled.currentMultiplier ?? 1);
     streak = {
       currentStreak: activeStreak,
       nextMultiplier: activeStreak + 1,
@@ -148,7 +154,7 @@ async function getState(req: Request) {
     authed: true,
     wallet,
     user: {
-      totalMinedEcho: settled.totalMinedEcho,
+      totalMinedEcho: Number(settled.totalMinedEcho ?? 0),
       totalPurchasedEcho: Number(userTotals?.totalPurchasedEcho ?? 0),
       purchaseMultiplier: Number(userTotals?.purchaseMultiplier ?? 1),
       referralMultiplier: Number(userTotals?.referralMultiplier ?? 1),
@@ -156,11 +162,14 @@ async function getState(req: Request) {
     session: {
       isActive: settled.isActive,
       startedAt: settled.startedAt,
-      lastAccruedAt: settled.lastAccruedAt,
-      baseRatePerHr: settled.baseRatePerHr,
-      multiplier: settled.multiplier,
-      sessionMined: settled.sessionMined,
       endsAt: settled.endsAt,
+      baseDailyEcho: Number(settled.baseDailyEcho ?? 0),
+      currentMultiplier: Number(settled.currentMultiplier ?? 1),
+      currentRatePerSec: Number(settled.currentRatePerSec ?? 0),
+      earnedEchoSnapshot: Number(settled.earnedEchoSnapshot ?? 0),
+      lastRateChangeAt: settled.lastRateChangeAt,
+      projectedTotalEcho: Number(settled.projectedTotalEcho ?? 0),
+      sessionMined: Number(settled.sessionMined ?? 0),
     },
     streak,
   });
