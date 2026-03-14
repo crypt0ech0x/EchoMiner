@@ -19,11 +19,15 @@ type ApiState = {
   session: {
     isActive: boolean;
     startedAt: string | null;
-    lastAccruedAt: string | null;
     endsAt?: string | null;
-    baseRatePerHr?: number;
-    baseRate?: number;
-    multiplier: number;
+
+    baseDailyEcho?: number;
+    currentMultiplier?: number;
+    currentRatePerSec?: number;
+    earnedEchoSnapshot?: number;
+    lastRateChangeAt?: string | null;
+    projectedTotalEcho?: number;
+
     sessionMined: number;
   };
   streak?: {
@@ -164,23 +168,22 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     ? new Date(api.session.startedAt).getTime()
     : null;
 
-  const lastAccruedAtMs = api.session?.lastAccruedAt
-    ? new Date(api.session.lastAccruedAt).getTime()
-    : null;
-
   const endsAtMs = api.session?.endsAt
     ? new Date(api.session.endsAt).getTime()
     : null;
 
-  const baseRatePerHr = Number(
-    api.session?.baseRatePerHr ?? (api.session as any)?.baseRate ?? 0
-  );
-
-  const multiplier = Number(api.session?.multiplier ?? 1);
+  const baseDailyEcho = Number(api.session?.baseDailyEcho ?? 0);
+  const currentMultiplier = Number(api.session?.currentMultiplier ?? 1);
+  const currentRatePerSec = Number(api.session?.currentRatePerSec ?? 0);
+  const earnedEchoSnapshot = Number(api.session?.earnedEchoSnapshot ?? 0);
+  const lastRateChangeAtMs = api.session?.lastRateChangeAt
+    ? new Date(api.session.lastRateChangeAt).getTime()
+    : null;
+  const projectedTotalEcho = Number(api.session?.projectedTotalEcho ?? 0);
   const sessionMined = Number(api.session?.sessionMined ?? 0);
 
-  const effectiveRatePerSec =
-    baseRatePerHr > 0 ? (baseRatePerHr * multiplier) / 3600 : 0;
+  const baseRatePerHr = baseDailyEcho > 0 ? baseDailyEcho / 24 : 0;
+  const baseRatePerSec = baseDailyEcho > 0 ? baseDailyEcho / (24 * 60 * 60) : 0;
 
   const fallbackEndTimeMs =
     startedAtMs != null ? startedAtMs + 24 * 60 * 60 * 1000 : null;
@@ -209,7 +212,7 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
     streak: {
       ...base.streak,
       currentStreak: Number(api.streak?.currentStreak ?? 0),
-      lastSessionStartAt: base.streak.lastSessionStartAt,
+      lastSessionStartAt: startedAtMs,
       lastSessionEndAt: api.streak?.lastSessionEndAt
         ? new Date(api.streak.lastSessionEndAt).getTime()
         : null,
@@ -225,12 +228,15 @@ function apiToAppState(api: ApiState, prev?: AppState | null): AppState {
       status: isActive ? "active" : "ended",
       startTime: startedAtMs,
       endTime: endsAtMs ?? fallbackEndTimeMs,
-      baseRate: baseRatePerHr / 3600,
-      effectiveRate: effectiveRatePerSec,
+
+      // legacy-compatible fields
+      baseRate: baseRatePerSec,
+      effectiveRate: currentRatePerSec,
       baseRatePerHr,
-      multiplier,
+      multiplier: currentMultiplier,
+
       sessionMined,
-      lastAccruedAt: lastAccruedAtMs,
+      lastAccruedAt: lastRateChangeAtMs,
       purchaseMultiplier,
     },
   };
