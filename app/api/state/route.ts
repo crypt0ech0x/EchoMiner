@@ -131,24 +131,26 @@ async function getState(req: Request) {
     },
   });
 
-  let streak;
-  if (settled.isActive) {
-    const activeStreak = Number(settled.currentMultiplier ?? 1);
-    streak = {
-      currentStreak: activeStreak,
-      nextMultiplier: activeStreak + 1,
-      lastSessionEndAt: settled.endsAt,
-      graceEndsAt: settled.endsAt ? getGraceEndsAt(settled.endsAt) : null,
-    };
-  } else {
-    const plan = await getNextSessionPlan(authedUser.id);
-    streak = {
-      currentStreak: Number(plan.currentStreak ?? 0),
-      nextMultiplier: Number(plan.nextMultiplier ?? 1),
-      lastSessionEndAt: plan.lastSessionEndAt,
-      graceEndsAt: plan.graceEndsAt,
-    };
-  }
+  const plan = await getNextSessionPlan(authedUser.id);
+
+let streak;
+if (settled.isActive) {
+  const activeStreak = Number(plan.nextMultiplier ?? 1);
+
+  streak = {
+    currentStreak: activeStreak,
+    nextMultiplier: activeStreak + 1,
+    lastSessionEndAt: plan.lastSessionEndAt,
+    graceEndsAt: settled.endsAt ? getGraceEndsAt(settled.endsAt) : null,
+  };
+} else {
+  streak = {
+    currentStreak: Number(plan.currentStreak ?? 0),
+    nextMultiplier: Number(plan.nextMultiplier ?? 1),
+    lastSessionEndAt: plan.lastSessionEndAt,
+    graceEndsAt: plan.graceEndsAt,
+  };
+}
 
   return shapeResponse({
     authed: true,
