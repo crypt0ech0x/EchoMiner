@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import {
   settleMiningSession,
   getNextSessionPlan,
-  DEFAULT_BASE_RATE_PER_HR,
+  startProjectedMiningSession,
+  DEFAULT_BASE_DAILY_ECHO,
   SESSION_DURATION_SECONDS,
 } from "@/lib/mining";
 import { getEffectiveMultiplier } from "@/lib/economy";
@@ -118,25 +119,21 @@ export async function POST(req: Request) {
 
     const userId = auth.userId;
 
+    // Settle any finished session first so totals/streak history stay correct.
     const settled = await settleMiningSession(userId);
 
-    if (settled.isActive && settled.startedAt) {
-      const endsAt = new Date(
-        settled.startedAt.getTime() + SESSION_DURATION_SECONDS * 1000
-      );
-
+    if (settled.isActive && settled.startedAt && settled.endsAt) {
       return NextResponse.json(
         {
           ok: false,
           error: "Session already active",
-          endsAt: endsAt.toISOString(),
+          endsAt: settled.endsAt.toISOString(),
         },
         { status: 409 }
       );
     }
 
     const now = new Date();
-    const endsAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
     const streakPlan = await getNextSessionPlan(userId, now);
 
     const userMultipliers = await prisma.user.findUnique({
@@ -161,34 +158,29 @@ export async function POST(req: Request) {
       boostMultiplier,
     });
 
-    const baseRatePerHr = DEFAULT_BASE_RATE_PER_HR;
-
-    await prisma.miningSession.upsert({
-      where: { userId },
-      update: {
-        isActive: true,
-        startedAt: now,
-        lastAccruedAt: now,
-        baseRatePerHr,
-        multiplier,
-        sessionMined: 0,
-      },
-      create: {
-        userId,
-        isActive: true,
-        startedAt: now,
-        lastAccruedAt: now,
-        baseRatePerHr,
-        multiplier,
-        sessionMined: 0,
-      },
+    const startedSession = await startProjectedMiningSession({
+      userId,
+      multiplier,
+      now,
+      baseDailyEcho: DEFAULT_BASE_DAILY_ECHO,
     });
+
+    const endsAt =
+      startedSession.endsAt ??
+      new Date(now.getTime() + SESSION_DURATION_SECONDS * 1000);
 
     return NextResponse.json({
       ok: true,
+      startedAt: startedSession.startedAt?.toISOString() ?? now.toISOString(),
       endsAt: endsAt.toISOString(),
-      baseRatePerHr,
-      multiplier,
+      baseDailyEcho: Number(startedSession.baseDailyEcho ?? DEFAULT_BASE_DAILY_ECHO),
+      currentMultiplier: Number(startedSession.currentMultiplier ?? multiplier),
+      currentRatePerSec: Number(startedSession.currentRatePerSec ?? 0),
+      projectedTotalEcho: Number(startedSession.projectedTotalEcho ?? 0),
+      earnedEchoSnapshot: Number(startedSession.earnedEchoSnapshot ?? 0),
+      lastRateChangeAt:
+        startedSession.lastRateChangeAt?.toISOString() ?? now.toISOString(),
+      sessionMined: Number(startedSession.sessionMined ?? 0),
       multiplierBreakdown: {
         streakMultiplier,
         purchaseMultiplier,
