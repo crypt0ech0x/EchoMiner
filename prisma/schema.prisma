@@ -9,40 +9,43 @@ generator client {
 }
 
 model User {
-  id                   String              @id @default(cuid())
-  createdAt            DateTime            @default(now())
-  updatedAt            DateTime            @updatedAt
+  id                  String   @id @default(cuid())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  email                String?             @unique
-  totalMinedEcho       Float               @default(0)
-  totalPurchasedEcho   Float               @default(0)
-  totalReferralEcho    Float               @default(0)
-  totalBonusEcho       Float               @default(0)
+  email               String?  @unique
 
-  purchaseMultiplier   Float               @default(1)
-  referralMultiplier   Float               @default(1)
-  riskScore            Float               @default(0)
+  // settled balances only
+  totalMinedEcho      Float    @default(0)
+  totalPurchasedEcho  Float    @default(0)
+  totalReferralEcho   Float    @default(0)
+  totalBonusEcho      Float    @default(0)
 
-  referralCode         String?             @unique
-  referredByUserId     String?
-  referredByUser       User?               @relation("UserReferredBy", fields: [referredByUserId], references: [id], onDelete: SetNull)
-  referredUsers        User[]              @relation("UserReferredBy")
+  // persistent account multipliers
+  purchaseMultiplier  Float    @default(1)
+  referralMultiplier  Float    @default(1)
 
-  wallet               Wallet?
-  miningSession        MiningSession?
-  miningHistory        MiningHistory[]
-  sessions             Session[]
-  purchases            Purchase[]
-  ledgerEntries        LedgerEntry[]
-  referralsMade        Referral[]          @relation("ReferralReferrer")
-  referralsReceived    Referral[]          @relation("ReferralReferred")
-  leaderboardRewards   LeaderboardReward[]
-  claimAllocations     ClaimAllocation[]
+  // anti-abuse / referral fields
+  riskScore           Float    @default(0)
+  referralCode        String?  @unique
+  referredByUserId    String?
+
+  referredBy          User?    @relation("UserReferrals", fields: [referredByUserId], references: [id], onDelete: SetNull)
+  referredUsers       User[]   @relation("UserReferrals")
+
+  wallet              Wallet?
+  miningSession       MiningSession?
+  miningHistory       MiningHistory[]
+  sessions            Session[]
+  purchases           Purchase[]
+  ledgerEntries       LedgerEntry[]
+  leaderboardRewards  LeaderboardReward[]
 
   @@index([totalMinedEcho])
   @@index([totalPurchasedEcho])
-  @@index([referralCode])
   @@index([riskScore])
+  @@index([referralCode])
+  @@index([referredByUserId])
 }
 
 model Wallet {
@@ -54,8 +57,8 @@ model Wallet {
   verified   Boolean  @default(false)
   verifiedAt DateTime?
 
-  userId String? @unique
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId     String?  @unique
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 model WalletNonce {
@@ -67,26 +70,40 @@ model WalletNonce {
 
   @@index([walletAddress])
   @@index([nonce])
+  @@index([createdAt])
 }
 
 model MiningSession {
-  id            String   @id @default(cuid())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  isActive      Boolean  @default(false)
-  startedAt     DateTime?
-  lastAccruedAt DateTime?
+  isActive           Boolean  @default(false)
 
-  baseRatePerHr Float    @default(0)
-  multiplier    Float    @default(1)
+  startedAt          DateTime?
+  endsAt             DateTime?
 
-  sessionMined  Float    @default(0)
+  // projected-session mining model
+  baseDailyEcho      Float    @default(0)   // full 24h session base payout, e.g. 1.0
+  currentMultiplier  Float    @default(1)
+  currentRatePerSec  Float    @default(0)
+
+  // checkpointed accrual
+  earnedEchoSnapshot Float    @default(0)
+  lastRateChangeAt   DateTime?
+
+  // total projected payout from current point forward
+  projectedTotalEcho Float    @default(0)
+
+  // convenience field for legacy/UI compatibility
+  sessionMined       Float    @default(0)
 
   @@index([isActive])
+  @@index([startedAt])
+  @@index([endsAt])
 }
 
 model MiningHistory {
@@ -99,45 +116,51 @@ model MiningHistory {
   startedAt     DateTime
   endedAt       DateTime
 
+  // historical record of the settled session
   baseRatePerHr Float
   multiplier    Float
   totalMined    Float
 
   @@index([userId])
   @@index([createdAt])
+  @@index([endedAt])
 }
 
 model Session {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  id         String   @id
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  revokedAt DateTime?
+  revokedAt  DateTime?
 
   @@index([userId])
   @@index([expiresAt])
 }
 
 model Purchase {
-  id            String   @id @default(cuid())
-  createdAt     DateTime @default(now())
-  confirmedAt   DateTime?
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   walletAddress String
-  packageId     String
-  solAmount     Float
-  echoAmount    Float
-  txSignature   String?  @unique
-  status        String   @default("pending")
+  packageId    String
+
+  solAmount    Float
+  echoAmount   Float
+
+  status       String   @default("pending") // pending | confirmed | failed
+  txSignature  String?  @unique
+  confirmedAt  DateTime?
 
   @@index([userId])
   @@index([walletAddress])
+  @@index([packageId])
   @@index([status])
   @@index([createdAt])
 }
@@ -151,82 +174,31 @@ model LedgerEntry {
 
   type         String
   amountEcho   Float
+
   sourceType   String?
   sourceId     String?
+
   metadataJson Json?
 
   @@index([userId])
   @@index([type])
+  @@index([sourceType, sourceId])
   @@index([createdAt])
 }
 
-model Referral {
-  id              String   @id @default(cuid())
-  createdAt       DateTime @default(now())
-  qualifiedAt     DateTime?
-
-  referrerUserId  String
-  referrerUser    User     @relation("ReferralReferrer", fields: [referrerUserId], references: [id], onDelete: Cascade)
-
-  referredUserId  String   @unique
-  referredUser    User     @relation("ReferralReferred", fields: [referredUserId], references: [id], onDelete: Cascade)
-
-  status          String   @default("pending")
-
-  @@index([referrerUserId])
-  @@index([status])
-}
-
 model LeaderboardReward {
-  id          String   @id @default(cuid())
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
 
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  periodKey   String
-  rank        Int
-  multiplier  Float
-  startsAt    DateTime
-  endsAt      DateTime
+  rank         Int
+  multiplier   Float    @default(1)
+  startsAt     DateTime
+  endsAt       DateTime
 
   @@index([userId])
-  @@index([periodKey])
   @@index([startsAt, endsAt])
-}
-
-model ClaimAllocation {
-  id              String   @id @default(cuid())
-  createdAt       DateTime @default(now())
-
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  walletAddress   String
-  snapshotId      String
-  snapshotAmount  Float
-  claimableAmount Float
-  claimedAmount   Float    @default(0)
-  claimedAt       DateTime?
-
-  status          String   @default("unclaimed")
-
-  @@index([userId])
-  @@index([walletAddress])
-  @@index([snapshotId])
-  @@index([status])
-}
-
-model DailyMetric {
-  id            String   @id @default(cuid())
-  date          DateTime @unique
-
-  newWallets    Int      @default(0)
-  activeMiners  Int      @default(0)
-  echoMined     Float    @default(0)
-  echoPurchased Float    @default(0)
-  solRevenue    Float    @default(0)
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  @@index([rank])
 }
