@@ -7,15 +7,27 @@ type Row = {
   wallet: string;
   verified: boolean;
   createdAt: string;
+
   previousTotal: number;
   liveSession: number;
   liveTotal: number;
+
   sessionActive: boolean;
   endingSoon: boolean;
-  baseRatePerHr: number;
-  multiplier: number;
-  liveMultiplier: number;
+
+  totalPurchasedEcho?: number;
+  purchaseMultiplier?: number;
+  referralMultiplier?: number;
+
+  baseDailyEcho?: number;
+  currentMultiplier?: number;
+  currentRatePerSec?: number;
+  projectedTotalEcho?: number;
+  earnedEchoSnapshot?: number;
+
   startedAt: string | null;
+  endsAt?: string | null;
+  lastRateChangeAt?: string | null;
 };
 
 type Summary = {
@@ -25,6 +37,7 @@ type Summary = {
   previousTotal: number;
   liveSessionTotal: number;
   liveTotal: number;
+  totalPurchasedEcho?: number;
   avgLivePerWallet: number;
   avgLivePerActive: number;
 };
@@ -504,74 +517,92 @@ export default function AdminDbPage() {
                   </thead>
 
                   <tbody>
-                    {sortedRows.map((row) => (
-                      <tr
-                        key={row.wallet}
-                        className="border-t border-white/10 hover:bg-white/[0.03]"
-                      >
-                        <td className="p-4 font-mono" title={row.wallet}>
-                          {shortWallet(row.wallet)}
-                        </td>
+                    {sortedRows.map((row) => {
+                      const ratePerHour = Number(row.currentRatePerSec ?? 0) * 3600;
+                      const basePerHour = Number(row.baseDailyEcho ?? 0) / 24;
+                      const liveMultiplier = Number(row.currentMultiplier ?? 1);
 
-                        <td className="p-4">
-                          <span className={row.verified ? "text-emerald-300 font-bold" : "text-white/35 font-bold"}>
-                            {row.verified ? "Yes" : "No"}
-                          </span>
-                        </td>
+                      return (
+                        <tr
+                          key={row.wallet}
+                          className="border-t border-white/10 hover:bg-white/[0.03]"
+                        >
+                          <td className="p-4 font-mono" title={row.wallet}>
+                            {shortWallet(row.wallet)}
+                          </td>
 
-                        <td className="p-4 font-bold">{fmtNum(row.previousTotal)}</td>
-
-                        <td className="p-4">
-                          {row.sessionActive ? (
-                            <div>
-                              <div className="text-emerald-300 font-bold">
-                                {fmtNum(row.liveSession)}
-                              </div>
-                              <div className="text-xs text-white/35">Active</div>
-                            </div>
-                          ) : (
-                            <span className="text-white/35">—</span>
-                          )}
-                        </td>
-
-                        <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
-
-                        <td className="p-4">
-                          {row.sessionActive ? (
-                            <div>
-                              <div>{fmtNum(row.baseRatePerHr * row.multiplier, 4)} E/H</div>
-                              <div className="text-xs text-white/35">
-                                base {fmtNum(row.baseRatePerHr, 4)} × {fmtNum(row.multiplier, 2)}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-white/35">—</span>
-                          )}
-                        </td>
-
-                        <td className="p-4">
-                          {row.sessionActive ? (
-                            <span className="font-bold text-cyan-300">
-                              x{fmtNum(row.liveMultiplier, 2)}
+                          <td className="p-4">
+                            <span
+                              className={
+                                row.verified
+                                  ? "text-emerald-300 font-bold"
+                                  : "text-white/35 font-bold"
+                              }
+                            >
+                              {row.verified ? "Yes" : "No"}
                             </span>
-                          ) : (
-                            <span className="text-white/35">—</span>
-                          )}
-                        </td>
+                          </td>
 
-                        <td className="p-4">{fmtDate(row.startedAt)}</td>
+                          <td className="p-4 font-bold">{fmtNum(row.previousTotal)}</td>
 
-                        <td className="p-4">
-                          {row.sessionActive ? (
-                            <span className={row.endingSoon ? "text-yellow-300 font-bold" : "text-emerald-300 font-bold"}>
-                              {row.endingSoon ? "Ending Soon" : "Active"}
-                            </span>
-                          ) : (
-                            <span className="text-white/35">Inactive</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                          <td className="p-4">
+                            {row.sessionActive ? (
+                              <div>
+                                <div className="text-emerald-300 font-bold">
+                                  {fmtNum(row.liveSession)}
+                                </div>
+                                <div className="text-xs text-white/35">Active</div>
+                              </div>
+                            ) : (
+                              <span className="text-white/35">—</span>
+                            )}
+                          </td>
+
+                          <td className="p-4 font-bold">{fmtNum(row.liveTotal)}</td>
+
+                          <td className="p-4">
+                            {row.sessionActive ? (
+                              <div>
+                                <div>{fmtNum(ratePerHour, 4)} E/H</div>
+                                <div className="text-xs text-white/35">
+                                  base {fmtNum(basePerHour, 4)} × {fmtNum(liveMultiplier, 2)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-white/35">—</span>
+                            )}
+                          </td>
+
+                          <td className="p-4">
+                            {row.sessionActive ? (
+                              <span className="font-bold text-cyan-300">
+                                x{fmtNum(liveMultiplier, 2)}
+                              </span>
+                            ) : (
+                              <span className="text-white/35">—</span>
+                            )}
+                          </td>
+
+                          <td className="p-4">{fmtDate(row.startedAt)}</td>
+
+                          <td className="p-4">
+                            {row.sessionActive ? (
+                              <span
+                                className={
+                                  row.endingSoon
+                                    ? "text-yellow-300 font-bold"
+                                    : "text-emerald-300 font-bold"
+                                }
+                              >
+                                {row.endingSoon ? "Ending Soon" : "Active"}
+                              </span>
+                            ) : (
+                              <span className="text-white/35">Inactive</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
 
                     {!sortedRows.length && !loading && (
                       <tr>
