@@ -103,42 +103,22 @@ export default function EchoMinerApp() {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
+  // New projected-session model:
+  // session.sessionMined is already the live earned amount from the backend.
   const sessionEarnings = useMemo(() => {
-    if (!state?.session?.isActive) return 0;
+    return Number(state?.session?.sessionMined ?? 0);
+  }, [state]);
 
-    const base = Number(state.session.sessionMined ?? 0);
-    const lastAccruedAt = state.session.lastAccruedAt ?? null;
-
-    if (!lastAccruedAt) return base;
-    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) {
-      return base;
-    }
-
-    const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
-    return base + deltaSec * effectiveRatePerSec;
-  }, [state, now, effectiveRatePerSec]);
-
+  // Settled balance + live active session
   const balanceCardTotal = useMemo(() => {
     const settledTotal = Number(state?.user?.totalMined ?? 0);
+    const liveSession = Number(state?.session?.sessionMined ?? 0);
+    return settledTotal + liveSession;
+  }, [state]);
 
-    if (!state?.session?.isActive) return settledTotal;
-
-    const lastAccruedAt = state.session.lastAccruedAt ?? null;
-    if (!lastAccruedAt) return settledTotal;
-    if (!Number.isFinite(effectiveRatePerSec) || effectiveRatePerSec <= 0) {
-      return settledTotal;
-    }
-
-    const deltaSec = Math.max(0, (now - lastAccruedAt) / 1000);
-    return settledTotal + deltaSec * effectiveRatePerSec;
-  }, [state, now, effectiveRatePerSec]);
-
+  // Display the live session multiplier directly
   const totalMultiplier = useMemo(() => {
-    if (!state?.session) return 1;
-    const base = Number(state.session.baseRate ?? 0);
-    const eff = Number(state.session.effectiveRate ?? 0);
-    if (!base || base <= 0) return 1;
-    return eff / base;
+    return Number(state?.session?.multiplier ?? 1);
   }, [state]);
 
   const handleStartSession = async () => {
@@ -157,10 +137,7 @@ export default function EchoMinerApp() {
     } catch (e: any) {
       console.error("start session failed:", e);
 
-      const message =
-        e?.data?.error ||
-        e?.message ||
-        "Failed to start session";
+      const message = e?.data?.error || e?.message || "Failed to start session";
 
       setSessionError(message);
 
@@ -305,30 +282,25 @@ export default function EchoMinerApp() {
           />
         )}
 
-        {activeTab === Tab.STORE && (
-          <StoreTab
-            state={state}
-            onPurchase={setState}
-          />
-        )}
+        {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
 
         {activeTab === Tab.WALLET && (
           <WalletTab
-  totalMinedEcho={state.user.totalMined}
-  walletFromServer={{
-    address: state.wallet?.address ?? null,
-    verified: !!state.wallet?.verified,
-    verifiedAt: state.wallet?.verifiedAt ?? null,
-  }}
-  onVerified={async () => {
-    const fresh = await EchoAPI.getState();
-    setState(fresh);
+            totalMinedEcho={state.user.totalMined}
+            walletFromServer={{
+              address: state.wallet?.address ?? null,
+              verified: !!state.wallet?.verified,
+              verifiedAt: state.wallet?.verifiedAt ?? null,
+            }}
+            onVerified={async () => {
+              const fresh = await EchoAPI.getState();
+              setState(fresh);
 
-    if (fresh.authed) {
-      setActiveTab(Tab.MINE);
-    }
-  }}
-/>
+              if (fresh.authed) {
+                setActiveTab(Tab.MINE);
+              }
+            }}
+          />
         )}
       </Layout>
 
