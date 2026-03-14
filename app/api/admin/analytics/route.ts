@@ -1,7 +1,7 @@
 // app/api/admin/analytics/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { settleMiningSession, getSessionEndsAt } from "@/lib/mining";
+import { settleMiningSession } from "@/lib/mining";
 import { requireAdminRequest } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
@@ -29,7 +29,9 @@ function dayKey(d: Date) {
 
 function parseRange(searchParams: URLSearchParams) {
   const raw = Number(searchParams.get("days") ?? 14);
-  const days = Number.isFinite(raw) ? Math.max(7, Math.min(90, Math.floor(raw))) : 14;
+  const days = Number.isFinite(raw)
+    ? Math.max(7, Math.min(90, Math.floor(raw)))
+    : 14;
   return days;
 }
 
@@ -58,10 +60,19 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "desc" },
     });
 
-    const userIds = Array.from(new Set(wallets.map((w) => w.userId).filter(Boolean))) as string[];
+    const userIds = Array.from(
+      new Set(wallets.map((w) => w.userId).filter(Boolean))
+    ) as string[];
+
+    // Settle/refresh all active sessions once so analytics use current live values
+    const settledByUserId = new Map<
+      string,
+      Awaited<ReturnType<typeof settleMiningSession>>
+    >();
 
     for (const userId of userIds) {
-      await settleMiningSession(userId, now);
+      const settled = await settleMiningSession(userId, now);
+      settledByUserId.set(userId, settled);
     }
 
     const users = await prisma.user.findMany({
@@ -69,6 +80,9 @@ export async function GET(req: Request) {
       select: {
         id: true,
         totalMinedEcho: true,
+        totalPurchasedEcho: true,
+        purchaseMultiplier: true,
+        referralMultiplier: true,
       },
     });
 
@@ -78,10 +92,14 @@ export async function GET(req: Request) {
         userId: true,
         isActive: true,
         startedAt: true,
-        lastAccruedAt: true,
+        endsAt: true,
         sessionMined: true,
-        baseRatePerHr: true,
-        multiplier: true,
+        baseDailyEcho: true,
+        currentMultiplier: true,
+        currentRatePerSec: true,
+        lastRateChangeAt: true,
+        projectedTotalEcho: true,
+        earnedEchoSnapshot: true,
       },
     });
 
@@ -102,37 +120,73 @@ export async function GET(req: Request) {
     const sessionMap = new Map(sessions.map((s) => [s.userId, s]));
 
     const rows = wallets.map((wallet) => {
-      const user = userMap.get(wallet.userId);
-      const session = sessionMap.get(wallet.userId);
+      const user = wallet.userId ? userMap.get(wallet.userId) : undefined;
+      const session = wallet.userId ? sessionMap.get(wallet.userId) : undefined;
+      const settled = wallet.userId ? settledByUserId.get(wallet.userId) : undefined;
 
       const active =
-        !!session?.isActive &&
-        !!session?.startedAt &&
-        now.getTime() < getSessionEndsAt(session.startedAt).getTime();
+        !!settled?.isActive &&
+        !!settled?.startedAt &&
+        !!settled?.endsAt &&
+        now.getTime() < settled.endsAt.getTime();
 
       const totalMinedEcho = Number(user?.totalMinedEcho ?? 0);
-      const liveSession = active ? Number(session?.sessionMined ?? 0) : 0;
-      const previousTotal = Math.max(0, totalMinedEcho - liveSession);
-      const liveTotal = totalMinedEcho;
+      const totalPurchasedEcho = Number(user?.totalPurchasedEcho ?? 0);
+      const purchaseMultiplier = Number(user?.purchaseMultiplier ?? 1);
+      const referralMultiplier = Number(user?.referralMultiplier ?? 1);
+
+      const liveSession = active ? Number(settled?.sessionMined ?? 0) : 0;
+      const previousTotal = totalMinedEcho;
+      const liveTotal = totalMinedEcho + liveSession;
 
       const endingSoon =
         active &&
-        !!session?.startedAt &&
-        getSessionEndsAt(session.startedAt).getTime() - now.getTime() < 60 * 60 * 1000;
+        !!settled?.endsAt &&
+        settled.endsAt.getTime() - now.getTime() < 60 * 60 * 1000;
 
       return {
         wallet: wallet.address,
         verified: wallet.verified,
         createdAt: wallet.createdAt.toISOString(),
+
         previousTotal,
         liveSession,
         liveTotal,
+
+        totalPurchasedEcho,
+
         sessionActive: active,
         endingSoon,
-        baseRatePerHr: active ? Number(session?.baseRatePerHr ?? 0) : 0,
-        multiplier: active ? Number(session?.multiplier ?? 1) : 1,
-        liveMultiplier: active ? Number(session?.multiplier ?? 1) : 0,
-        startedAt: session?.startedAt ? session.startedAt.toISOString() : null,
+
+        baseDailyEcho: active ? Number(settled?.baseDailyEcho ?? 0) : 0,
+        currentMultiplier: active ? Number(settled?.currentMultiplier ?? 1) : 1,
+        currentRatePerSec: active ? Number(settled?.currentRatePerSec ?? 0) : 0,
+        projectedTotalEcho: active ? Number(settled?.projectedTotalEcho ?? 0) : 0,
+        earnedEchoSnapshot: active ? Number(settled?.earnedEchoSnapshot ?? 0) : 0,
+
+        purchaseMultiplier,
+        referralMultiplier,
+
+        startedAt: settled?.startedAt ? settled.startedAt.toISOString() : null,
+        endsAt: settled?.endsAt ? settled.endsAt.toISOString() : null,
+        lastRateChangeAt: settled?.lastRateChangeAt
+          ? settled.lastRateChangeAt.toISOString()
+          : null,
+
+        rawSession: session
+          ? {
+              isActive: session.isActive,
+              startedAt: session.startedAt?.toISOString() ?? null,
+              endsAt: session.endsAt?.toISOString() ?? null,
+              sessionMined: Number(session.sessionMined ?? 0),
+              baseDailyEcho: Number(session.baseDailyEcho ?? 0),
+              currentMultiplier: Number(session.currentMultiplier ?? 1),
+              currentRatePerSec: Number(session.currentRatePerSec ?? 0),
+              lastRateChangeAt: session.lastRateChangeAt?.toISOString() ?? null,
+              projectedTotalEcho: Number(session.projectedTotalEcho ?? 0),
+              earnedEchoSnapshot: Number(session.earnedEchoSnapshot ?? 0),
+            }
+          : null,
       };
     });
 
@@ -143,6 +197,7 @@ export async function GET(req: Request) {
     const previousTotal = rows.reduce((s, r) => s + r.previousTotal, 0);
     const liveSessionTotal = rows.reduce((s, r) => s + r.liveSession, 0);
     const liveTotal = rows.reduce((s, r) => s + r.liveTotal, 0);
+    const totalPurchasedEcho = rows.reduce((s, r) => s + r.totalPurchasedEcho, 0);
 
     const newWalletsToday = wallets.filter(
       (w) => new Date(w.createdAt).getTime() >= today.getTime()
@@ -164,21 +219,30 @@ export async function GET(req: Request) {
     }
 
     const todaysLiveEmission = rows.reduce((sum, r) => sum + r.liveSession, 0);
-    emissionsMap.set(dayKey(today), (emissionsMap.get(dayKey(today)) ?? 0) + todaysLiveEmission);
+    emissionsMap.set(
+      dayKey(today),
+      (emissionsMap.get(dayKey(today)) ?? 0) + todaysLiveEmission
+    );
 
     let running = 0;
-    const dailyEmissions = Array.from(emissionsMap.entries()).map(([date, emitted]) => {
-      running += emitted;
-      return {
-        date,
-        emitted: Number(emitted.toFixed(6)),
-        cumulative: Number(running.toFixed(6)),
-      };
-    });
+    const dailyEmissions = Array.from(emissionsMap.entries()).map(
+      ([date, emitted]) => {
+        running += emitted;
+        return {
+          date,
+          emitted: Number(emitted.toFixed(6)),
+          cumulative: Number(running.toFixed(6)),
+        };
+      }
+    );
 
     const topLive = [...rows].sort((a, b) => b.liveTotal - a.liveTotal).slice(0, 10);
-    const topPrevious = [...rows].sort((a, b) => b.previousTotal - a.previousTotal).slice(0, 10);
-    const topLiveSession = [...rows].sort((a, b) => b.liveSession - a.liveSession).slice(0, 10);
+    const topPrevious = [...rows]
+      .sort((a, b) => b.previousTotal - a.previousTotal)
+      .slice(0, 10);
+    const topLiveSession = [...rows]
+      .sort((a, b) => b.liveSession - a.liveSession)
+      .slice(0, 10);
 
     return json({
       ok: true,
@@ -195,6 +259,7 @@ export async function GET(req: Request) {
         previousTotal,
         liveSessionTotal,
         liveTotal,
+        totalPurchasedEcho,
         avgLivePerWallet: totalWallets > 0 ? liveTotal / totalWallets : 0,
         avgLivePerActive: activeSessions > 0 ? liveTotal / activeSessions : 0,
       },
