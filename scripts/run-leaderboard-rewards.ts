@@ -4,8 +4,11 @@ import { getLeaderboardRewardForRank } from "@/lib/leaderboard";
 
 async function main() {
   const now = new Date();
+
   const startsAt = new Date(now);
-  const endsAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  startsAt.setHours(0, 0, 0, 0);
+
+  const endsAt = new Date(startsAt.getTime() + 24 * 60 * 60 * 1000);
   const periodKey = startsAt.toISOString().slice(0, 10);
 
   const topUsers = await prisma.user.findMany({
@@ -14,15 +17,23 @@ async function main() {
     select: { id: true },
   });
 
+  // Clear any previously generated rewards for this exact window
+  await prisma.leaderboardReward.deleteMany({
+    where: {
+      startsAt,
+      endsAt,
+    },
+  });
+
   for (let i = 0; i < topUsers.length; i++) {
     const rank = i + 1;
     const multiplier = getLeaderboardRewardForRank(rank);
+
     if (multiplier <= 1) continue;
 
-    await prisma.leaderboardReward.create({
+    const reward = await prisma.leaderboardReward.create({
       data: {
         userId: topUsers[i].id,
-        periodKey,
         rank,
         multiplier,
         startsAt,
@@ -36,8 +47,14 @@ async function main() {
         type: "leaderboard_reward",
         amountEcho: 0,
         sourceType: "leaderboard",
-        sourceId: periodKey,
-        metadataJson: { rank, multiplier, periodKey },
+        sourceId: reward.id,
+        metadataJson: {
+          rank,
+          multiplier,
+          periodKey,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+        },
       },
     });
   }
