@@ -1,64 +1,104 @@
 // app/api/referrals/apply/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getUserFromSessionCookie } from "@/lib/auth";
+import { getUserFromRequest } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
-  code?: string;
+  referralCode?: string;
 };
 
 export async function POST(req: Request) {
-  const user = await getUserFromSessionCookie();
+  try {
+    const user = await getUserFromRequest(req);
 
-  if (!user) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+    if (!user) {
+      return NextResponse.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
 
-  const body = (await req.json().catch(() => ({}))) as Body;
-  const code = String(body.code ?? "").trim().toUpperCase();
+    let body: Body = {};
+    try {
+      body = (await req.json()) as Body;
+    } catch {
+      body = {};
+    }
 
-  if (!code) {
-    return NextResponse.json({ ok: false, error: "Missing code" }, { status: 400 });
-  }
+    const referralCode = String(body.referralCode ?? "").trim();
 
-  const referrer = await prisma.user.findFirst({
-    where: { referralCode: code },
-    select: { id: true },
-  });
+    if (!referralCode) {
+      return NextResponse.json(
+        { ok: false, error: "Referral code is required" },
+        { status: 400 }
+      );
+    }
 
-  if (!referrer) {
-    return NextResponse.json({ ok: false, error: "Invalid referral code" }, { status: 404 });
-  }
-
-  if (referrer.id === user.id) {
-    return NextResponse.json({ ok: false, error: "Cannot refer yourself" }, { status: 400 });
-  }
-
-  const existing = await prisma.referral.findUnique({
-    where: { referredUserId: user.id },
-  });
-
-  if (existing) {
-    return NextResponse.json({ ok: false, error: "Referral already applied" }, { status: 409 });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    await tx.user.update({
+    const currentUser = await prisma.user.findUnique({
       where: { id: user.id },
-      data: { referredByUserId: referrer.id },
-    });
-
-    await tx.referral.create({
-      data: {
-        referrerUserId: referrer.id,
-        referredUserId: user.id,
-        status: "pending",
+      select: {
+        id: true,
+        referralCode: true,
+        referredByUserId: true,
       },
     });
-  });
 
-  return NextResponse.json({ ok: true });
+    if (!currentUser) {
+      return NextResponse.json(
+        { ok: false, error: "User not found" },
+        { status: 404 }
+      );
+    }
+
+    if (currentUser.referredByUserId) {
+      return NextResponse.json(
+        { ok: false, error: "Referral already applied" },
+        { status: 409 }
+      );
+    }
+
+    const referrer = await prisma.user.findUnique({
+      where: { referralCode },
+      select: {
+        id: true,
+        referralCode: true,
+      },
+    });
+
+    if (!referrer) {
+      return NextResponse.json(
+        { ok: false, error: "Invalid referral code" },
+        { status: 404 }
+      );
+    }
+
+    if (referrer.id === currentUser.id) {
+      return NextResponse.json(
+        { ok: false, error: "You cannot use your own referral code" },
+        { status: 400 }
+      );
+    }
+
+    await prisma.user.update({
+      where: { id: currentUser.id },
+      data: {
+        referredByUserId: referrer.id,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      referralCode,
+      referredByUserId: referrer.id,
+    });
+  } catch (err: any) {
+    console.error("referrals/apply error:", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message || "Failed to apply referral" },
+      { status: 500 }
+    );
+  }
 }
