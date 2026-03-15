@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 datasource db {
   provider = "postgresql"
 }
@@ -74,36 +72,46 @@ model WalletNonce {
 }
 
 model MiningSession {
-  id                 String   @id @default(cuid())
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
-  userId             String   @unique
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  isActive           Boolean  @default(false)
+  isActive              Boolean  @default(false)
 
-  startedAt          DateTime?
-  endsAt             DateTime?
+  startedAt             DateTime?
+  endsAt                DateTime?
 
   // projected-session mining model
-  baseDailyEcho      Float    @default(0)   // full 24h session base payout, e.g. 1.0
-  currentMultiplier  Float    @default(1)
-  currentRatePerSec  Float    @default(0)
+  baseDailyEcho         Float    @default(0)
+
+  // permanent session multiplier stack (streak + purchase + referral + leaderboard)
+  baseSessionMultiplier Float    @default(1)
+
+  // temporary boost multiplier stack
+  boostMultiplier       Float    @default(1)
+  boostExpiresAt        DateTime?
+
+  // live effective multiplier + rate
+  currentMultiplier     Float    @default(1)
+  currentRatePerSec     Float    @default(0)
 
   // checkpointed accrual
-  earnedEchoSnapshot Float    @default(0)
-  lastRateChangeAt   DateTime?
+  earnedEchoSnapshot    Float    @default(0)
+  lastRateChangeAt      DateTime?
 
   // total projected payout from current point forward
-  projectedTotalEcho Float    @default(0)
+  projectedTotalEcho    Float    @default(0)
 
-  // convenience field for legacy/UI compatibility
-  sessionMined       Float    @default(0)
+  // convenience field for UI compatibility
+  sessionMined          Float    @default(0)
 
   @@index([isActive])
   @@index([startedAt])
   @@index([endsAt])
+  @@index([boostExpiresAt])
 }
 
 model MiningHistory {
@@ -141,22 +149,22 @@ model Session {
 }
 
 model Purchase {
-  id           String   @id @default(cuid())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   walletAddress String
-  packageId    String
+  packageId     String
 
-  solAmount    Float
-  echoAmount   Float
+  solAmount     Float
+  echoAmount    Float
 
-  status       String   @default("pending") // pending | confirmed | failed
-  txSignature  String?  @unique
-  confirmedAt  DateTime?
+  status        String   @default("pending")
+  txSignature   String?  @unique
+  confirmedAt   DateTime?
 
   @@index([userId])
   @@index([walletAddress])
