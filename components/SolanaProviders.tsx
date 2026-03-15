@@ -1,15 +1,27 @@
 "use client";
 
 import { useMemo } from "react";
-import { ConnectionProvider, WalletProvider } from "@solana/wallet-adapter-react";
+import {
+  ConnectionProvider,
+  WalletProvider,
+} from "@solana/wallet-adapter-react";
 import { WalletModalProvider } from "@solana/wallet-adapter-react-ui";
-import { PhantomWalletAdapter, SolflareWalletAdapter } from "@solana/wallet-adapter-wallets";
+import {
+  PhantomWalletAdapter,
+  SolflareWalletAdapter,
+} from "@solana/wallet-adapter-wallets";
 import { clusterApiUrl } from "@solana/web3.js";
 
 import "@solana/wallet-adapter-react-ui/styles.css";
 
-export default function SolanaProviders({ children }: { children: React.ReactNode }) {
-  const endpoint = clusterApiUrl("mainnet-beta");
+export default function SolanaProviders({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const endpoint =
+    process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim() ||
+    clusterApiUrl("mainnet-beta");
 
   const wallets = useMemo(
     () => [new PhantomWalletAdapter(), new SolflareWalletAdapter()],
@@ -24,4 +36,3 @@ export default function SolanaProviders({ children }: { children: React.ReactNod
     </ConnectionProvider>
   );
 }
-
