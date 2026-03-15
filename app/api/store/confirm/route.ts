@@ -23,6 +23,43 @@ type Body = {
   walletAddress?: string;
 };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function verifySolTransferWithRetry(args: {
+  signature: string;
+  expectedSender: string;
+  expectedRecipient: string;
+  expectedLamports: number;
+  attempts?: number;
+  delayMs?: number;
+}) {
+  const attempts = args.attempts ?? 6;
+  const delayMs = args.delayMs ?? 1500;
+
+  let lastResult: any = null;
+
+  for (let i = 0; i < attempts; i++) {
+    lastResult = await verifySolTransfer({
+      signature: args.signature,
+      expectedSender: args.expectedSender,
+      expectedRecipient: args.expectedRecipient,
+      expectedLamports: args.expectedLamports,
+    });
+
+    if (!("error" in lastResult)) {
+      return lastResult;
+    }
+
+    if (i < attempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+
+  return lastResult;
+}
+
 export async function POST(req: Request) {
   try {
     let body: Body = {};
@@ -120,16 +157,21 @@ export async function POST(req: Request) {
 
     const totalEcho = getStorePackageTotalEcho(pkg);
 
-    const verification = await verifySolTransfer({
+    const verification = await verifySolTransferWithRetry({
       signature: txSignature,
       expectedSender: sessionCheck.walletAddress,
       expectedRecipient: getTreasuryWalletAddress(),
       expectedLamports: solToLamports(pkg.solAmount),
+      attempts: 6,
+      delayMs: 1500,
     });
 
     if ("error" in verification) {
       return NextResponse.json(
-        { ok: false, error: verification.error },
+        {
+          ok: false,
+          error: verification.error || "Failed to verify transaction",
+        },
         { status: 400 }
       );
     }
@@ -170,6 +212,7 @@ export async function POST(req: Request) {
             bonusEchoAmount: Number(pkg.bonusEcho ?? 0),
             totalEchoCredited: totalEcho,
             txSignature,
+            slot: verification.slot,
           },
         },
       });
@@ -185,10 +228,10 @@ export async function POST(req: Request) {
       txSignature,
       slot: verification.slot,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("store/confirm error:", err);
     return NextResponse.json(
-      { ok: false, error: "Confirm failed" },
+      { ok: false, error: err?.message || "Confirm failed" },
       { status: 500 }
     );
   }
