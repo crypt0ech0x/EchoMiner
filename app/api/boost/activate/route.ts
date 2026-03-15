@@ -1,12 +1,11 @@
-// app/api/boost/activate/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { getUserFromRequest } from "@/lib/auth";
 import {
-  settleMiningSession,
+  AD_BOOST_DURATION_SECONDS,
   reprojectMiningSession,
+  settleMiningSession,
 } from "@/lib/mining";
-import { getEffectiveMultiplier } from "@/lib/economy";
+import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,45 +23,47 @@ export async function POST(req: Request) {
       );
     }
 
-    // Refresh session first so we work from current canonical session data
     const settled = await settleMiningSession(user.id);
 
-    if (!settled.isActive) {
+    if (!settled.isActive || !settled.startedAt || !settled.endsAt) {
       return NextResponse.json(
         { ok: false, error: "No active mining session" },
         { status: 409 }
       );
     }
 
-    const userRow = await prisma.user.findUnique({
-      where: { id: user.id },
-      select: {
-        purchaseMultiplier: true,
-        referralMultiplier: true,
-      },
+    const now = new Date();
+
+    const currentSession = await prisma.miningSession.findUnique({
+      where: { userId: user.id },
     });
 
-    const streakMultiplier = Number(settled.currentMultiplier ?? 1);
-    const purchaseMultiplier = Number(userRow?.purchaseMultiplier ?? 1);
-    const referralMultiplier = Number(userRow?.referralMultiplier ?? 1);
+    if (!currentSession || !currentSession.isActive || !currentSession.endsAt) {
+      return NextResponse.json(
+        { ok: false, error: "No active mining session" },
+        { status: 409 }
+      );
+    }
 
-    // For now we keep leaderboard at 1 until fully re-enabled.
-    const leaderboardMultiplier = 1;
+    const baseSessionMultiplier = Number(
+      currentSession.baseSessionMultiplier ?? settled.baseSessionMultiplier ?? 1
+    );
 
-    // Apply ad boost as a live 2x factor on top of the current session stack
-    const boostMultiplier = AD_BOOST_MULTIPLIER;
-
-    const newMultiplier = getEffectiveMultiplier({
-      streakMultiplier,
-      purchaseMultiplier,
-      referralMultiplier,
-      leaderboardMultiplier,
-      boostMultiplier,
-    });
+    const nextBoostExpiresAt =
+      currentSession.boostExpiresAt &&
+      currentSession.boostExpiresAt.getTime() > now.getTime()
+        ? new Date(
+            currentSession.boostExpiresAt.getTime() +
+              AD_BOOST_DURATION_SECONDS * 1000
+          )
+        : new Date(now.getTime() + AD_BOOST_DURATION_SECONDS * 1000);
 
     const reprojection = await reprojectMiningSession({
       userId: user.id,
-      newMultiplier,
+      baseSessionMultiplier,
+      boostMultiplier: AD_BOOST_MULTIPLIER,
+      boostExpiresAt: nextBoostExpiresAt,
+      now,
     });
 
     if (!reprojection) {
@@ -80,11 +81,12 @@ export async function POST(req: Request) {
         sourceType: "ad_boost",
         sourceId: reprojection.id,
         metadataJson: {
-          boostMultiplier,
-          appliedMultiplier: newMultiplier,
-          previousSessionMined: Number(settled.sessionMined ?? 0),
+          boostMultiplier: AD_BOOST_MULTIPLIER,
+          baseSessionMultiplier,
+          appliedMultiplier: Number(reprojection.currentMultiplier ?? 1),
           projectedTotalEcho: Number(reprojection.projectedTotalEcho ?? 0),
-          activatedAt: new Date().toISOString(),
+          activatedAt: now.toISOString(),
+          boostExpiresAt: nextBoostExpiresAt.toISOString(),
         },
       },
     });
@@ -92,10 +94,17 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       applied: true,
-      currentMultiplier: Number(reprojection.currentMultiplier ?? newMultiplier),
+      baseSessionMultiplier: Number(reprojection.baseSessionMultiplier ?? baseSessionMultiplier),
+      boostMultiplier: Number(reprojection.boostMultiplier ?? AD_BOOST_MULTIPLIER),
+      boostExpiresAt: reprojection.boostExpiresAt
+        ? reprojection.boostExpiresAt.toISOString()
+        : nextBoostExpiresAt.toISOString(),
+      currentMultiplier: Number(reprojection.currentMultiplier ?? 1),
       currentRatePerSec: Number(reprojection.currentRatePerSec ?? 0),
       projectedTotalEcho: Number(reprojection.projectedTotalEcho ?? 0),
-      sessionMined: Number(reprojection.liveEarnedEcho ?? reprojection.sessionMined ?? 0),
+      sessionMined: Number(
+        reprojection.liveEarnedEcho ?? reprojection.sessionMined ?? 0
+      ),
       startedAt: reprojection.startedAt?.toISOString() ?? null,
       endsAt: reprojection.endsAt?.toISOString() ?? null,
       lastRateChangeAt: reprojection.lastRateChangeAt?.toISOString() ?? null,
