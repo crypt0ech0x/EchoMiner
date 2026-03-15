@@ -1,7 +1,7 @@
 // app/page.tsx
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { Tab, AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
@@ -29,6 +29,11 @@ export default function EchoMinerApp() {
   const connectedWalletAddress =
     connected && publicKey ? publicKey.toBase58() : null;
   const serverWalletAddress = state?.wallet?.address ?? null;
+
+  const prevSessionActiveRef = useRef<boolean>(false);
+  const justOpenedStoreAfterStartRef = useRef<boolean>(false);
+
+  const hasPurchasedEcho = Number(state?.user?.totalPurchased ?? 0) > 0;
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -99,24 +104,39 @@ export default function EchoMinerApp() {
     return () => clearInterval(interval);
   }, [state?.session?.isActive]);
 
+  // Nudge non-buyers to Store when a session ends.
+  useEffect(() => {
+    if (!state) return;
+
+    const currentActive = !!state.session?.isActive;
+    const previousActive = prevSessionActiveRef.current;
+
+    if (
+      previousActive &&
+      !currentActive &&
+      !hasPurchasedEcho &&
+      activeTab === Tab.MINE
+    ) {
+      setActiveTab(Tab.STORE);
+    }
+
+    prevSessionActiveRef.current = currentActive;
+  }, [state, activeTab, hasPurchasedEcho]);
+
   const effectiveRatePerSec = useMemo(() => {
     return Number(state?.session?.effectiveRate ?? 0);
   }, [state]);
 
-  // New projected-session model:
-  // session.sessionMined is already the live earned amount from the backend.
   const sessionEarnings = useMemo(() => {
     return Number(state?.session?.sessionMined ?? 0);
   }, [state]);
 
-  // Settled balance + live active session
   const balanceCardTotal = useMemo(() => {
     const settledTotal = Number(state?.user?.totalMined ?? 0);
     const liveSession = Number(state?.session?.sessionMined ?? 0);
     return settledTotal + liveSession;
   }, [state]);
 
-  // Display the live session multiplier directly
   const totalMultiplier = useMemo(() => {
     return Number(state?.session?.multiplier ?? 1);
   }, [state]);
@@ -134,6 +154,14 @@ export default function EchoMinerApp() {
 
       const updated = await EchoAPI.startSession();
       setState(updated);
+
+      // If the user has never bought, nudge them to Store shortly after first successful start.
+      if (Number(updated.user.totalPurchased ?? 0) <= 0) {
+        justOpenedStoreAfterStartRef.current = true;
+        window.setTimeout(() => {
+          setActiveTab(Tab.STORE);
+        }, 1200);
+      }
     } catch (e: any) {
       console.error("start session failed:", e);
 
@@ -282,7 +310,17 @@ export default function EchoMinerApp() {
           />
         )}
 
-        {activeTab === Tab.STORE && <StoreTab state={state} onPurchase={setState} />}
+        {activeTab === Tab.STORE && (
+          <StoreTab
+            state={state}
+            onPurchase={(updated) => {
+              setState(updated);
+
+              // After a successful purchase, send the user back to Mine.
+              setActiveTab(Tab.MINE);
+            }}
+          />
+        )}
 
         {activeTab === Tab.WALLET && (
           <WalletTab
@@ -297,7 +335,8 @@ export default function EchoMinerApp() {
               setState(fresh);
 
               if (fresh.authed) {
-                setActiveTab(Tab.MINE);
+                const hasAnyPurchased = Number(fresh.user.totalPurchased ?? 0) > 0;
+                setActiveTab(hasAnyPurchased ? Tab.MINE : Tab.STORE);
               }
             }}
           />
