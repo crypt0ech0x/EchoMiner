@@ -1,10 +1,10 @@
-// lib/mining.ts
 import { prisma } from "@/lib/prisma";
 import { qualifyReferralIfNeeded } from "@/lib/referrals";
 
 export const SESSION_DURATION_SECONDS = 60 * 60 * 24;
 export const STREAK_GRACE_SECONDS = 60 * 60 * 24;
 export const DEFAULT_BASE_DAILY_ECHO = 1.0;
+export const AD_BOOST_DURATION_SECONDS = 60 * 60;
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -91,17 +91,31 @@ export function getProjectedTotalEcho(args: {
   return round6(args.earnedSoFar + remainingSeconds * newRatePerSec);
 }
 
+function resolveCurrentMultiplier(args: {
+  baseSessionMultiplier: number;
+  boostMultiplier?: number;
+}) {
+  return Number(args.baseSessionMultiplier ?? 1) * Number(args.boostMultiplier ?? 1);
+}
+
 export function buildNewSessionValues(args: {
   now: Date;
   baseDailyEcho: number;
-  multiplier: number;
+  baseSessionMultiplier: number;
+  boostMultiplier?: number;
+  boostExpiresAt?: Date | null;
 }) {
   const startedAt = args.now;
   const endsAt = getSessionEndsAt(startedAt);
+  const boostMultiplier = Number(args.boostMultiplier ?? 1);
+  const currentMultiplier = resolveCurrentMultiplier({
+    baseSessionMultiplier: args.baseSessionMultiplier,
+    boostMultiplier,
+  });
 
   const currentRatePerSec = getRatePerSec({
     baseDailyEcho: args.baseDailyEcho,
-    multiplier: args.multiplier,
+    multiplier: currentMultiplier,
   });
 
   const projectedTotalEcho = round6(
@@ -112,13 +126,95 @@ export function buildNewSessionValues(args: {
     startedAt,
     endsAt,
     baseDailyEcho: args.baseDailyEcho,
-    currentMultiplier: args.multiplier,
+    baseSessionMultiplier: Number(args.baseSessionMultiplier ?? 1),
+    boostMultiplier,
+    boostExpiresAt: args.boostExpiresAt ?? null,
+    currentMultiplier,
     currentRatePerSec,
     earnedEchoSnapshot: 0,
     lastRateChangeAt: startedAt,
     projectedTotalEcho,
     sessionMined: 0,
   };
+}
+
+async function syncExpiredBoostIfNeededTx(
+  tx: any,
+  session: any,
+  now: Date
+) {
+  if (
+    !session ||
+    !session.isActive ||
+    !session.endsAt ||
+    !session.boostExpiresAt ||
+    Number(session.boostMultiplier ?? 1) <= 1 ||
+    now.getTime() < session.boostExpiresAt.getTime()
+  ) {
+    return session;
+  }
+
+  const effectiveNow =
+    session.boostExpiresAt > session.endsAt ? session.endsAt : session.boostExpiresAt;
+
+  const earnedSoFar = getLiveEarnedEcho({
+    earnedEchoSnapshot: Number(session.earnedEchoSnapshot ?? 0),
+    currentRatePerSec: Number(session.currentRatePerSec ?? 0),
+    lastRateChangeAt: session.lastRateChangeAt,
+    now: effectiveNow,
+    endsAt: session.endsAt,
+    projectedTotalEcho: Number(session.projectedTotalEcho ?? 0),
+  });
+
+  const newBaseSessionMultiplier = Number(session.baseSessionMultiplier ?? 1);
+  const newBoostMultiplier = 1;
+  const newCurrentMultiplier = resolveCurrentMultiplier({
+    baseSessionMultiplier: newBaseSessionMultiplier,
+    boostMultiplier: newBoostMultiplier,
+  });
+
+  const newRatePerSec = getRatePerSec({
+    baseDailyEcho: Number(session.baseDailyEcho ?? 0),
+    multiplier: newCurrentMultiplier,
+  });
+
+  const newProjectedTotalEcho = getProjectedTotalEcho({
+    earnedSoFar,
+    now: effectiveNow,
+    endsAt: session.endsAt,
+    baseDailyEcho: Number(session.baseDailyEcho ?? 0),
+    multiplier: newCurrentMultiplier,
+  });
+
+  return tx.miningSession.update({
+    where: { userId: session.userId },
+    data: {
+      boostMultiplier: 1,
+      boostExpiresAt: null,
+      currentMultiplier: newCurrentMultiplier,
+      currentRatePerSec: newRatePerSec,
+      earnedEchoSnapshot: earnedSoFar,
+      lastRateChangeAt: effectiveNow,
+      projectedTotalEcho: newProjectedTotalEcho,
+      sessionMined: earnedSoFar,
+    },
+  });
+}
+
+export async function syncExpiredBoostIfNeeded(args: {
+  userId: string;
+  now?: Date;
+}) {
+  const now = args.now ?? new Date();
+
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.miningSession.findUnique({
+      where: { userId: args.userId },
+    });
+
+    if (!session) return null;
+    return syncExpiredBoostIfNeededTx(tx, session, now);
+  });
 }
 
 export async function getLatestCompletedSession(userId: string) {
@@ -163,7 +259,7 @@ export async function getNextSessionPlan(userId: string, now = new Date()) {
 
 export async function startProjectedMiningSession(args: {
   userId: string;
-  multiplier: number;
+  baseSessionMultiplier: number;
   now?: Date;
   baseDailyEcho?: number;
 }) {
@@ -173,7 +269,9 @@ export async function startProjectedMiningSession(args: {
   const sessionValues = buildNewSessionValues({
     now,
     baseDailyEcho,
-    multiplier: args.multiplier,
+    baseSessionMultiplier: args.baseSessionMultiplier,
+    boostMultiplier: 1,
+    boostExpiresAt: null,
   });
 
   return prisma.miningSession.upsert({
@@ -183,6 +281,9 @@ export async function startProjectedMiningSession(args: {
       startedAt: sessionValues.startedAt,
       endsAt: sessionValues.endsAt,
       baseDailyEcho: sessionValues.baseDailyEcho,
+      baseSessionMultiplier: sessionValues.baseSessionMultiplier,
+      boostMultiplier: sessionValues.boostMultiplier,
+      boostExpiresAt: sessionValues.boostExpiresAt,
       currentMultiplier: sessionValues.currentMultiplier,
       currentRatePerSec: sessionValues.currentRatePerSec,
       earnedEchoSnapshot: 0,
@@ -196,6 +297,9 @@ export async function startProjectedMiningSession(args: {
       startedAt: sessionValues.startedAt,
       endsAt: sessionValues.endsAt,
       baseDailyEcho: sessionValues.baseDailyEcho,
+      baseSessionMultiplier: sessionValues.baseSessionMultiplier,
+      boostMultiplier: sessionValues.boostMultiplier,
+      boostExpiresAt: sessionValues.boostExpiresAt,
       currentMultiplier: sessionValues.currentMultiplier,
       currentRatePerSec: sessionValues.currentRatePerSec,
       earnedEchoSnapshot: 0,
@@ -208,13 +312,15 @@ export async function startProjectedMiningSession(args: {
 
 export async function reprojectMiningSession(args: {
   userId: string;
-  newMultiplier: number;
+  baseSessionMultiplier?: number;
+  boostMultiplier?: number;
+  boostExpiresAt?: Date | null;
   now?: Date;
 }) {
   const now = args.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
-    const session = await tx.miningSession.findUnique({
+    let session = await tx.miningSession.findUnique({
       where: { userId: args.userId },
     });
 
@@ -222,38 +328,56 @@ export async function reprojectMiningSession(args: {
       return null;
     }
 
+    session = await syncExpiredBoostIfNeededTx(tx, session, now);
+
     const earnedSoFar = getLiveEarnedEcho({
-      earnedEchoSnapshot: session.earnedEchoSnapshot,
-      currentRatePerSec: session.currentRatePerSec,
+      earnedEchoSnapshot: Number(session.earnedEchoSnapshot ?? 0),
+      currentRatePerSec: Number(session.currentRatePerSec ?? 0),
       lastRateChangeAt: session.lastRateChangeAt,
       now,
       endsAt: session.endsAt,
-      projectedTotalEcho: session.projectedTotalEcho,
+      projectedTotalEcho: Number(session.projectedTotalEcho ?? 0),
     });
 
     const effectiveNow = now > session.endsAt ? session.endsAt : now;
+    const nextBaseSessionMultiplier = Number(
+      args.baseSessionMultiplier ?? session.baseSessionMultiplier ?? 1
+    );
+    const nextBoostMultiplier = Number(
+      args.boostMultiplier ?? session.boostMultiplier ?? 1
+    );
+    const nextBoostExpiresAt =
+      args.boostExpiresAt === undefined ? session.boostExpiresAt : args.boostExpiresAt;
 
-    const newRatePerSec = getRatePerSec({
-      baseDailyEcho: session.baseDailyEcho,
-      multiplier: args.newMultiplier,
+    const nextCurrentMultiplier = resolveCurrentMultiplier({
+      baseSessionMultiplier: nextBaseSessionMultiplier,
+      boostMultiplier: nextBoostMultiplier,
     });
 
-    const newProjectedTotalEcho = getProjectedTotalEcho({
+    const nextRatePerSec = getRatePerSec({
+      baseDailyEcho: Number(session.baseDailyEcho ?? 0),
+      multiplier: nextCurrentMultiplier,
+    });
+
+    const nextProjectedTotalEcho = getProjectedTotalEcho({
       earnedSoFar,
       now: effectiveNow,
       endsAt: session.endsAt,
-      baseDailyEcho: session.baseDailyEcho,
-      multiplier: args.newMultiplier,
+      baseDailyEcho: Number(session.baseDailyEcho ?? 0),
+      multiplier: nextCurrentMultiplier,
     });
 
     const updated = await tx.miningSession.update({
       where: { userId: args.userId },
       data: {
-        currentMultiplier: args.newMultiplier,
-        currentRatePerSec: newRatePerSec,
+        baseSessionMultiplier: nextBaseSessionMultiplier,
+        boostMultiplier: nextBoostMultiplier,
+        boostExpiresAt: nextBoostExpiresAt,
+        currentMultiplier: nextCurrentMultiplier,
+        currentRatePerSec: nextRatePerSec,
         earnedEchoSnapshot: earnedSoFar,
         lastRateChangeAt: effectiveNow,
-        projectedTotalEcho: newProjectedTotalEcho,
+        projectedTotalEcho: nextProjectedTotalEcho,
         sessionMined: earnedSoFar,
       },
     });
@@ -266,6 +390,8 @@ export async function reprojectMiningSession(args: {
 }
 
 export async function getLiveMiningSnapshot(userId: string, now = new Date()) {
+  await syncExpiredBoostIfNeeded({ userId, now });
+
   const session = await prisma.miningSession.findUnique({
     where: { userId },
   });
@@ -276,6 +402,9 @@ export async function getLiveMiningSnapshot(userId: string, now = new Date()) {
       startedAt: null as Date | null,
       endsAt: null as Date | null,
       baseDailyEcho: 0,
+      baseSessionMultiplier: 1,
+      boostMultiplier: 1,
+      boostExpiresAt: null as Date | null,
       currentMultiplier: 1,
       currentRatePerSec: 0,
       earnedEchoSnapshot: 0,
@@ -301,6 +430,9 @@ export async function getLiveMiningSnapshot(userId: string, now = new Date()) {
     startedAt: session.startedAt,
     endsAt: session.endsAt,
     baseDailyEcho: session.baseDailyEcho,
+    baseSessionMultiplier: session.baseSessionMultiplier,
+    boostMultiplier: session.boostMultiplier,
+    boostExpiresAt: session.boostExpiresAt,
     currentMultiplier: session.currentMultiplier,
     currentRatePerSec: session.currentRatePerSec,
     earnedEchoSnapshot: session.earnedEchoSnapshot,
@@ -314,7 +446,7 @@ export async function getLiveMiningSnapshot(userId: string, now = new Date()) {
 
 export async function settleMiningSession(userId: string, now = new Date()) {
   return prisma.$transaction(async (tx) => {
-    const session = await tx.miningSession.findUnique({
+    let session = await tx.miningSession.findUnique({
       where: { userId },
     });
 
@@ -329,6 +461,9 @@ export async function settleMiningSession(userId: string, now = new Date()) {
         startedAt: null as Date | null,
         endsAt: null as Date | null,
         baseDailyEcho: 0,
+        baseSessionMultiplier: 1,
+        boostMultiplier: 1,
+        boostExpiresAt: null as Date | null,
         currentMultiplier: 1,
         currentRatePerSec: 0,
         earnedEchoSnapshot: 0,
@@ -339,6 +474,8 @@ export async function settleMiningSession(userId: string, now = new Date()) {
         earned: 0,
       };
     }
+
+    session = await syncExpiredBoostIfNeededTx(tx, session, now);
 
     const earned = getLiveEarnedEcho({
       earnedEchoSnapshot: session.earnedEchoSnapshot,
@@ -364,6 +501,9 @@ export async function settleMiningSession(userId: string, now = new Date()) {
         startedAt: updated.startedAt,
         endsAt: updated.endsAt,
         baseDailyEcho: updated.baseDailyEcho,
+        baseSessionMultiplier: updated.baseSessionMultiplier,
+        boostMultiplier: updated.boostMultiplier,
+        boostExpiresAt: updated.boostExpiresAt,
         currentMultiplier: updated.currentMultiplier,
         currentRatePerSec: updated.currentRatePerSec,
         earnedEchoSnapshot: updated.earnedEchoSnapshot,
@@ -408,8 +548,13 @@ export async function settleMiningSession(userId: string, now = new Date()) {
         metadataJson: {
           startedAt: session.startedAt.toISOString(),
           endedAt: session.endsAt.toISOString(),
-          currentMultiplier: session.currentMultiplier,
           baseDailyEcho: session.baseDailyEcho,
+          baseSessionMultiplier: session.baseSessionMultiplier,
+          boostMultiplier: session.boostMultiplier,
+          boostExpiresAt: session.boostExpiresAt
+            ? session.boostExpiresAt.toISOString()
+            : null,
+          currentMultiplier: session.currentMultiplier,
           currentRatePerSec: session.currentRatePerSec,
           projectedTotalEcho: session.projectedTotalEcho,
         },
@@ -423,6 +568,9 @@ export async function settleMiningSession(userId: string, now = new Date()) {
         startedAt: null,
         endsAt: null,
         baseDailyEcho: 0,
+        baseSessionMultiplier: 1,
+        boostMultiplier: 1,
+        boostExpiresAt: null,
         currentMultiplier: 1,
         currentRatePerSec: 0,
         earnedEchoSnapshot: 0,
@@ -437,6 +585,9 @@ export async function settleMiningSession(userId: string, now = new Date()) {
       startedAt: null as Date | null,
       endsAt: null as Date | null,
       baseDailyEcho: 0,
+      baseSessionMultiplier: 1,
+      boostMultiplier: 1,
+      boostExpiresAt: null as Date | null,
       currentMultiplier: 1,
       currentRatePerSec: 0,
       earnedEchoSnapshot: 0,
