@@ -1,11 +1,13 @@
-// app/api/store/create-intent/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
-import { getStorePackage } from "@/lib/store-packages";
+import {
+  getStorePackage,
+  getStorePackageTotalEcho,
+} from "@/lib/store-packages";
 import { getTreasuryWalletAddress, solToLamports } from "@/lib/solana-payments";
 
 export const runtime = "nodejs";
@@ -60,13 +62,15 @@ export async function POST(req: Request) {
       );
     }
 
+    const totalEcho = getStorePackageTotalEcho(pkg);
+
     const purchase = await prisma.purchase.create({
       data: {
         userId: sessionCheck.user.id,
         walletAddress: sessionCheck.walletAddress,
         packageId: pkg.id,
         solAmount: pkg.solAmount,
-        echoAmount: pkg.echoAmount,
+        echoAmount: totalEcho,
         status: "pending",
       },
       select: {
@@ -80,7 +84,9 @@ export async function POST(req: Request) {
       packageId: pkg.id,
       name: pkg.name,
       solAmount: pkg.solAmount,
-      echoAmount: pkg.echoAmount,
+      echoAmount: totalEcho,
+      baseEchoAmount: pkg.echoAmount,
+      bonusEchoAmount: Number(pkg.bonusEcho ?? 0),
       lamports: solToLamports(pkg.solAmount),
       treasuryWallet: getTreasuryWalletAddress(),
       walletAddress: sessionCheck.walletAddress,
