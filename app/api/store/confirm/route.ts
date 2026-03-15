@@ -1,17 +1,18 @@
-// app/api/store/confirm/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   requireMatchingWalletSession,
   isWalletSessionErr,
 } from "@/lib/server-wallet-auth";
-import { getStorePackage } from "@/lib/store-packages";
+import {
+  getStorePackage,
+  getStorePackageTotalEcho,
+} from "@/lib/store-packages";
 import {
   getTreasuryWalletAddress,
   solToLamports,
   verifySolTransfer,
 } from "@/lib/solana-payments";
-import { getPurchaseMultiplier } from "@/lib/economy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,7 +79,13 @@ export async function POST(req: Request) {
     }
 
     if (purchase.status === "confirmed") {
-      return NextResponse.json({ ok: true, alreadyConfirmed: true });
+      return NextResponse.json({
+        ok: true,
+        alreadyConfirmed: true,
+        echoAmount: purchase.echoAmount,
+        solAmount: purchase.solAmount,
+        txSignature: purchase.txSignature,
+      });
     }
 
     if (purchase.txSignature && purchase.txSignature !== txSignature) {
@@ -111,6 +118,8 @@ export async function POST(req: Request) {
       );
     }
 
+    const totalEcho = getStorePackageTotalEcho(pkg);
+
     const verification = await verifySolTransfer({
       signature: txSignature,
       expectedSender: sessionCheck.walletAddress,
@@ -134,23 +143,15 @@ export async function POST(req: Request) {
           txSignature,
           status: "confirmed",
           confirmedAt: now,
-        },
-      });
-
-      const updatedUser = await tx.user.update({
-        where: { id: purchase.userId },
-        data: {
-          totalPurchasedEcho: { increment: purchase.echoAmount },
-        },
-        select: {
-          totalPurchasedEcho: true,
+          solAmount: pkg.solAmount,
+          echoAmount: totalEcho,
         },
       });
 
       await tx.user.update({
         where: { id: purchase.userId },
         data: {
-          purchaseMultiplier: getPurchaseMultiplier(updatedUser.totalPurchasedEcho),
+          totalPurchasedEcho: { increment: totalEcho },
         },
       });
 
@@ -158,12 +159,16 @@ export async function POST(req: Request) {
         data: {
           userId: purchase.userId,
           type: "purchase_credit",
-          amountEcho: purchase.echoAmount,
+          amountEcho: totalEcho,
           sourceType: "purchase",
           sourceId: purchase.id,
           metadataJson: {
-            packageId: purchase.packageId,
-            solAmount: purchase.solAmount,
+            packageId: pkg.id,
+            packageName: pkg.name,
+            solAmount: pkg.solAmount,
+            baseEchoAmount: pkg.echoAmount,
+            bonusEchoAmount: Number(pkg.bonusEcho ?? 0),
+            totalEchoCredited: totalEcho,
             txSignature,
           },
         },
@@ -173,8 +178,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       confirmedAt: now.toISOString(),
-      echoAmount: purchase.echoAmount,
-      solAmount: purchase.solAmount,
+      echoAmount: totalEcho,
+      baseEchoAmount: pkg.echoAmount,
+      bonusEchoAmount: Number(pkg.bonusEcho ?? 0),
+      solAmount: pkg.solAmount,
       txSignature,
       slot: verification.slot,
     });
