@@ -1,4 +1,3 @@
-// app/api/mining/start/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
@@ -118,8 +117,6 @@ export async function POST(req: Request) {
     }
 
     const userId = auth.userId;
-
-    // Settle any finished session first so totals/streak history stay correct.
     const settled = await settleMiningSession(userId);
 
     if (settled.isActive && settled.startedAt && settled.endsAt) {
@@ -150,7 +147,7 @@ export async function POST(req: Request) {
     const leaderboardMultiplier = 1;
     const boostMultiplier = 1;
 
-    const multiplier = getEffectiveMultiplier({
+    const baseSessionMultiplier = getEffectiveMultiplier({
       streakMultiplier,
       purchaseMultiplier,
       referralMultiplier,
@@ -160,7 +157,7 @@ export async function POST(req: Request) {
 
     const startedSession = await startProjectedMiningSession({
       userId,
-      multiplier,
+      baseSessionMultiplier,
       now,
       baseDailyEcho: DEFAULT_BASE_DAILY_ECHO,
     });
@@ -174,7 +171,12 @@ export async function POST(req: Request) {
       startedAt: startedSession.startedAt?.toISOString() ?? now.toISOString(),
       endsAt: endsAt.toISOString(),
       baseDailyEcho: Number(startedSession.baseDailyEcho ?? DEFAULT_BASE_DAILY_ECHO),
-      currentMultiplier: Number(startedSession.currentMultiplier ?? multiplier),
+      baseSessionMultiplier: Number(startedSession.baseSessionMultiplier ?? baseSessionMultiplier),
+      boostMultiplier: Number(startedSession.boostMultiplier ?? 1),
+      boostExpiresAt: startedSession.boostExpiresAt
+        ? startedSession.boostExpiresAt.toISOString()
+        : null,
+      currentMultiplier: Number(startedSession.currentMultiplier ?? baseSessionMultiplier),
       currentRatePerSec: Number(startedSession.currentRatePerSec ?? 0),
       projectedTotalEcho: Number(startedSession.projectedTotalEcho ?? 0),
       earnedEchoSnapshot: Number(startedSession.earnedEchoSnapshot ?? 0),
