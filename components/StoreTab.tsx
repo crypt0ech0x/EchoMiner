@@ -1,4 +1,3 @@
-// components/StoreTab.tsx
 "use client";
 
 import React, { useMemo, useState } from "react";
@@ -70,24 +69,29 @@ export default function StoreTab({ state, onPurchase }: Props) {
     setMessage(null);
 
     if (!connected || !publicKey || !sendTransaction) {
-      setError("Connect your wallet first.");
+      const msg = "Connect your wallet first.";
+      setError(msg);
       return;
     }
 
     try {
       setBusyPackageId(packageId);
 
-      EchoAPI.setConnectedWalletAddress(publicKey.toBase58());
+      const walletAddress = publicKey.toBase58();
+      const sessionId = EchoAPI.getSessionId();
+
+      EchoAPI.setConnectedWalletAddress(walletAddress);
 
       const intentRes = await fetch("/api/store/create-intent", {
         method: "POST",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          ...(sessionId ? { "x-session-id": sessionId } : {}),
         },
         body: JSON.stringify({
           packageId,
-          walletAddress: publicKey.toBase58(),
+          walletAddress,
         }),
       });
 
@@ -128,11 +132,12 @@ export default function StoreTab({ state, onPurchase }: Props) {
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          ...(sessionId ? { "x-session-id": sessionId } : {}),
         },
         body: JSON.stringify({
           purchaseId: intentData.purchaseId,
           txSignature: signature,
-          walletAddress: publicKey.toBase58(),
+          walletAddress,
         }),
       });
 
@@ -314,9 +319,8 @@ export default function StoreTab({ state, onPurchase }: Props) {
         </div>
 
         <div className="text-sm text-white/60 leading-relaxed">
-          Purchases no longer change mining multipliers. They add ECHO directly to
-          your balance. The <span className="font-black text-white">Miner Pack</span>{" "}
-          is highlighted as the best balance of price and value.
+          Purchases add <span className="font-black text-white">ECHO directly</span> to
+          your balance. No hidden multiplier stacking.
         </div>
       </div>
 
