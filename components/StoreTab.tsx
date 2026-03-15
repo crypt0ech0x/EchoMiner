@@ -1,17 +1,21 @@
 // components/StoreTab.tsx
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { AppState } from "@/lib/types";
 import { EchoAPI } from "@/lib/api";
-import { STORE_PACKAGES } from "@/lib/store-packages";
+import {
+  STORE_PACKAGES,
+  getStorePackageTotalEcho,
+  getStorePackageValuePerSol,
+} from "@/lib/store-packages";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import {
   PublicKey,
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
-import { Zap, CheckCircle2, Wallet } from "lucide-react";
+import { Zap, CheckCircle2, Wallet, TrendingUp } from "lucide-react";
 
 type Props = {
   state: AppState;
@@ -31,6 +35,19 @@ type PurchaseIntentResponse = {
   error?: string;
 };
 
+function fmtNum(n: number, digits = 0) {
+  return Number(n ?? 0).toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+function fmtSol(n: number) {
+  if (n >= 1) return `${Number(n).toFixed(0)} SOL`;
+  if (n >= 0.1) return `${Number(n).toFixed(1)} SOL`;
+  return `${Number(n).toFixed(2)} SOL`;
+}
+
 export default function StoreTab({ state, onPurchase }: Props) {
   const { connection } = useConnection();
   const { publicKey, connected, sendTransaction } = useWallet();
@@ -38,6 +55,15 @@ export default function StoreTab({ state, onPurchase }: Props) {
   const [busyPackageId, setBusyPackageId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const minedEcho = Number(state.user.totalMined ?? 0);
+  const purchasedEcho = Number(state.user.totalPurchased ?? 0);
+  const totalEcho = minedEcho + purchasedEcho;
+
+  const currentWalletAddress =
+    state.wallet?.address ?? state.walletAddress ?? null;
+
+  const packages = useMemo(() => STORE_PACKAGES, []);
 
   async function handleBuy(packageId: string) {
     setError(null);
@@ -120,7 +146,7 @@ export default function StoreTab({ state, onPurchase }: Props) {
       onPurchase(fresh);
 
       setMessage(
-        `Success. Purchased ${intentData.echoAmount} ECHO for ${intentData.solAmount} SOL.`
+        `Success. Purchased ${Number(intentData.echoAmount ?? 0).toLocaleString()} ECHO for ${intentData.solAmount} SOL.`
       );
     } catch (e: any) {
       setError(e?.message || "Purchase failed.");
@@ -138,19 +164,19 @@ export default function StoreTab({ state, onPurchase }: Props) {
         <div>
           <h2 className="text-lg font-black text-white tracking-tight">Store</h2>
           <p className="text-xs text-white/40 font-bold">
-            Buy ECHO with SOL and permanently increase your mining multiplier.
+            Buy ECHO packs with SOL. Packs add ECHO directly to your balance.
           </p>
         </div>
       </div>
 
       <div className="glass rounded-2xl border border-white/10 p-5 space-y-4">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
             <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
               Mined ECHO
             </div>
             <div className="text-lg font-black text-white mt-2">
-              {Number(state.user.totalMined ?? 0).toFixed(2)}
+              {fmtNum(minedEcho, 2)}
             </div>
           </div>
 
@@ -159,59 +185,123 @@ export default function StoreTab({ state, onPurchase }: Props) {
               Purchased ECHO
             </div>
             <div className="text-lg font-black text-white mt-2">
-              {Number(state.user.totalPurchased ?? 0).toFixed(2)}
+              {fmtNum(purchasedEcho, 2)}
             </div>
           </div>
 
           <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
             <div className="text-[10px] font-black text-white/40 uppercase tracking-widest">
-              Purchase Multiplier
+              Total Balance
             </div>
             <div className="text-lg font-black text-emerald-300 mt-2">
-              {Number(state.user.purchaseMultiplier ?? 1).toFixed(2)}x
+              {fmtNum(totalEcho, 2)}
             </div>
           </div>
         </div>
       </div>
 
+      {!currentWalletAddress && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-amber-200 text-sm font-bold">
+          Verify a wallet before purchasing.
+        </div>
+      )}
+
       <div className="glass rounded-2xl border border-white/10 p-5">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {STORE_PACKAGES.map((pkg) => (
-            <div
-              key={pkg.id}
-              className="rounded-3xl border border-white/10 bg-white/5 p-5 space-y-4"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-sm font-black text-white">{pkg.name}</div>
-                  <div className="text-xs text-white/40 mt-1">{pkg.description}</div>
-                </div>
+        <div className="flex items-center gap-3 mb-4">
+          <TrendingUp className="w-4 h-4 text-white/60" />
+          <div className="text-xs font-black text-white/60 uppercase tracking-widest">
+            Optimized Pricing
+          </div>
+        </div>
 
-                {pkg.badge ? (
-                  <div className="text-[10px] px-2 py-1 rounded-full bg-white/10 text-white/70 font-black uppercase tracking-widest">
-                    {pkg.badge}
-                  </div>
-                ) : null}
-              </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {packages.map((pkg) => {
+            const totalEchoForPack = getStorePackageTotalEcho(pkg);
+            const valuePerSol = getStorePackageValuePerSol(pkg);
+            const projectedBalance = totalEcho + totalEchoForPack;
+            const isBusy = busyPackageId === pkg.id;
+            const isHighlighted = !!pkg.highlight;
 
-              <div className="space-y-1">
-                <div className="text-3xl font-black text-white">
-                  +{pkg.echoAmount.toLocaleString()} ECHO
-                </div>
-                <div className="text-sm text-teal-300 font-black">
-                  {pkg.solAmount} SOL
-                </div>
-              </div>
-
-              <button
-                onClick={() => handleBuy(pkg.id)}
-                disabled={busyPackageId === pkg.id}
-                className="w-full h-12 rounded-2xl bg-white text-slate-950 font-black text-xs uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50"
+            return (
+              <div
+                key={pkg.id}
+                className={`rounded-3xl p-5 space-y-4 border transition-all ${
+                  isHighlighted
+                    ? "border-teal-400/40 bg-teal-500/10 shadow-[0_0_0_1px_rgba(45,212,191,0.15),0_12px_48px_rgba(20,184,166,0.12)] scale-[1.01]"
+                    : "border-white/10 bg-white/5"
+                }`}
               >
-                {busyPackageId === pkg.id ? "Processing..." : "Buy with SOL"}
-              </button>
-            </div>
-          ))}
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-black text-white">{pkg.name}</div>
+                    <div className="text-xs text-white/40 mt-1">
+                      {pkg.description}
+                    </div>
+                  </div>
+
+                  {pkg.badge ? (
+                    <div
+                      className={`text-[10px] px-2 py-1 rounded-full font-black uppercase tracking-widest whitespace-nowrap ${
+                        isHighlighted
+                          ? "bg-teal-400 text-slate-950"
+                          : "bg-white/10 text-white/70"
+                      }`}
+                    >
+                      {pkg.badge}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-1">
+                  <div className="text-3xl font-black text-white">
+                    +{fmtNum(totalEchoForPack)} ECHO
+                  </div>
+                  <div className="text-sm text-teal-300 font-black">
+                    {fmtSol(pkg.solAmount)}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-black/20 p-4 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-white/45 font-bold">Value</span>
+                    <span className="text-sm font-black text-white">
+                      {fmtNum(valuePerSol, 0)} ECHO / SOL
+                    </span>
+                  </div>
+
+                  {!!pkg.bonusEcho && Number(pkg.bonusEcho) > 0 && (
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-white/45 font-bold">Bonus</span>
+                      <span className="text-sm font-black text-emerald-300">
+                        +{fmtNum(pkg.bonusEcho)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-white/45 font-bold">
+                      After Purchase
+                    </span>
+                    <span className="text-sm font-black text-cyan-300">
+                      {fmtNum(projectedBalance, 2)} ECHO
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => handleBuy(pkg.id)}
+                  disabled={isBusy}
+                  className={`w-full h-12 rounded-2xl font-black text-xs uppercase tracking-widest transition disabled:opacity-50 ${
+                    isHighlighted
+                      ? "bg-gradient-to-r from-teal-500 to-emerald-600 text-white shadow-lg shadow-teal-500/20"
+                      : "bg-white text-slate-950 hover:bg-slate-200"
+                  }`}
+                >
+                  {isBusy ? "Processing..." : "Buy with SOL"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -219,16 +309,14 @@ export default function StoreTab({ state, onPurchase }: Props) {
         <div className="flex items-center gap-3">
           <Wallet className="w-4 h-4 text-white/60" />
           <div className="text-xs font-black text-white/60 uppercase tracking-widest">
-            Referral Foundation
+            Purchase Design
           </div>
         </div>
 
-        <div className="text-sm text-white/60">
-          Your referral multiplier currently contributes{" "}
-          <span className="font-black text-white">
-            {Number(state.user.referralMultiplier ?? 1).toFixed(2)}x
-          </span>
-          .
+        <div className="text-sm text-white/60 leading-relaxed">
+          Purchases no longer change mining multipliers. They add ECHO directly to
+          your balance. The <span className="font-black text-white">Miner Pack</span>{" "}
+          is highlighted as the best balance of price and value.
         </div>
       </div>
 
