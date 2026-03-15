@@ -57,12 +57,22 @@ export async function POST(req: Request) {
     const pkg = getStorePackage(packageId);
     if (!pkg) {
       return NextResponse.json(
-        { ok: false, error: "Invalid packageId" },
+        { ok: false, error: `Invalid packageId: ${packageId}` },
         { status: 400 }
       );
     }
 
     const totalEcho = getStorePackageTotalEcho(pkg);
+    const treasuryWallet = getTreasuryWalletAddress();
+
+    if (!treasuryWallet) {
+      return NextResponse.json(
+        { ok: false, error: "Treasury wallet is not configured" },
+        { status: 500 }
+      );
+    }
+
+    const lamports = solToLamports(pkg.solAmount);
 
     const purchase = await prisma.purchase.create({
       data: {
@@ -87,14 +97,18 @@ export async function POST(req: Request) {
       echoAmount: totalEcho,
       baseEchoAmount: pkg.echoAmount,
       bonusEchoAmount: Number(pkg.bonusEcho ?? 0),
-      lamports: solToLamports(pkg.solAmount),
-      treasuryWallet: getTreasuryWalletAddress(),
+      lamports,
+      treasuryWallet,
       walletAddress: sessionCheck.walletAddress,
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("store/create-intent error:", err);
+
     return NextResponse.json(
-      { ok: false, error: "Create intent failed" },
+      {
+        ok: false,
+        error: err?.message || "Create intent failed",
+      },
       { status: 500 }
     );
   }
