@@ -131,10 +131,16 @@ export default function EchoMinerApp() {
     return Number(state?.session?.sessionMined ?? 0);
   }, [state]);
 
+  // Total displayed balance:
+  // mined + purchased + referral + bonus + live active session
   const balanceCardTotal = useMemo(() => {
-    const settledTotal = Number(state?.user?.totalMined ?? 0);
+    const mined = Number(state?.user?.totalMined ?? 0);
+    const purchased = Number(state?.user?.totalPurchased ?? 0);
+    const referral = Number((state?.user as any)?.totalReferral ?? 0);
+    const bonus = Number((state?.user as any)?.totalBonus ?? 0);
     const liveSession = Number(state?.session?.sessionMined ?? 0);
-    return settledTotal + liveSession;
+
+    return mined + purchased + referral + bonus + liveSession;
   }, [state]);
 
   const totalMultiplier = useMemo(() => {
@@ -315,8 +321,6 @@ export default function EchoMinerApp() {
             state={state}
             onPurchase={(updated) => {
               setState(updated);
-
-              // After a successful purchase, send the user back to Mine.
               setActiveTab(Tab.MINE);
             }}
           />
@@ -335,7 +339,8 @@ export default function EchoMinerApp() {
               setState(fresh);
 
               if (fresh.authed) {
-                const hasAnyPurchased = Number(fresh.user.totalPurchased ?? 0) > 0;
+                const hasAnyPurchased =
+                  Number(fresh.user.totalPurchased ?? 0) > 0;
                 setActiveTab(hasAnyPurchased ? Tab.MINE : Tab.STORE);
               }
             }}
